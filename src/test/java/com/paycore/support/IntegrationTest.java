@@ -46,7 +46,8 @@ public abstract class IntegrationTest {
     void cleanDatabase() {
         jdbc.execute("TRUNCATE audit_logs, webhook_deliveries, outbox_events, webhook_events, idempotency_keys, "
                 + "ledger_entries, refunds, payments, payment_methods, customers, merchants, processed_events, "
-                + "merchant_daily_stats, notifications RESTART IDENTITY CASCADE");
+                + "merchant_daily_stats, notifications, mock_gateway_charges, mock_gateway_refunds "
+                + "RESTART IDENTITY CASCADE");
         flushRedis();
     }
 

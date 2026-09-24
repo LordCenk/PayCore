@@ -2,14 +2,20 @@ package com.paycore.processor;
 
 import com.paycore.common.Ids;
 import com.paycore.config.PayCoreProperties;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * In-memory stand-in for a real gateway. No money moves.
+ * Stand-in for a real gateway. No money moves.
+ *
+ * <p>Its records live in the {@code mock_gateway_*} tables: those belong to the simulated gateway, not to
+ * PayCore, and exist so the gateway remembers charges across PayCore restarts like a real one would.
+ * Writes are auto-committed and never join a PayCore transaction.
  *
  * <p>Test tokens force an outcome (like a real gateway's test cards):
  * <ul>
@@ -26,13 +32,13 @@ import org.springframework.stereotype.Component;
 public class MockPaymentProcessor implements PaymentProcessor {
 
     private final PayCoreProperties.Processor config;
-    private final Map<String, ChargeResult> charges = new ConcurrentHashMap<>();
-    private final Map<String, String> chargeTokens = new ConcurrentHashMap<>();
-    private final Map<String, RefundResult> refunds = new ConcurrentHashMap<>();
+    private final JdbcTemplate jdbc;
+    /** Only drives the tok_timeout scenario ("first call is lost"), so it can stay in memory. */
     private final Map<String, Integer> timeoutsInjected = new ConcurrentHashMap<>();
 
-    public MockPaymentProcessor(PayCoreProperties properties) {
+    public MockPaymentProcessor(PayCoreProperties properties, JdbcTemplate jdbc) {
         this.config = properties.processor();
+        this.jdbc = jdbc;
     }
 
     @Override
@@ -42,9 +48,9 @@ public class MockPaymentProcessor implements PaymentProcessor {
 
     @Override
     public ChargeResult charge(ChargeRequest request) throws ProcessorTimeoutException {
-        ChargeResult existing = charges.get(request.reference());
-        if (existing != null) {
-            return existing; // idempotent: same reference, same result, no second charge
+        Optional<ChargeResult> existing = getCharge(request.reference());
+        if (existing.isPresent()) {
+            return existing.get(); // idempotent: same reference, same result, no second charge
         }
         String token = request.paymentMethodToken();
         switch (token) {
@@ -83,37 +89,59 @@ public class MockPaymentProcessor implements PaymentProcessor {
 
     @Override
     public Optional<ChargeResult> getCharge(String reference) {
-        return Optional.ofNullable(charges.get(reference));
+        List<ChargeResult> rows = jdbc.query(
+                "SELECT outcome, provider_id, decline_code, message FROM mock_gateway_charges WHERE reference = ?",
+                (rs, i) -> new ChargeResult(Outcome.valueOf(rs.getString("outcome")), rs.getString("provider_id"),
+                        rs.getString("decline_code"), rs.getString("message")),
+                reference);
+        return rows.stream().findFirst();
     }
 
     @Override
     public RefundResult refund(RefundRequest request) {
-        return refunds.computeIfAbsent(request.reference(), ref -> {
-            ChargeResult charge = charges.get(request.chargeReference());
-            if (charge == null || charge.outcome() != Outcome.SUCCEEDED) {
-                return new RefundResult(Outcome.DECLINED, null, "CHARGE_NOT_FOUND", "No successful charge to refund");
-            }
-            if ("tok_refund_decline".equals(chargeTokens.get(request.chargeReference()))) {
-                return new RefundResult(Outcome.DECLINED, null, "REFUND_DECLINED", "Refund declined by gateway");
-            }
-            return new RefundResult(Outcome.SUCCEEDED, "mock_re_" + Ids.random(16), null, null);
-        });
+        Optional<RefundResult> existing = getRefund(request.reference());
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        List<String> tokens = jdbc.queryForList(
+                "SELECT token FROM mock_gateway_charges WHERE reference = ? AND outcome = 'SUCCEEDED'",
+                String.class, request.chargeReference());
+        RefundResult result;
+        if (tokens.isEmpty()) {
+            result = new RefundResult(Outcome.DECLINED, null, "CHARGE_NOT_FOUND", "No successful charge to refund");
+        } else if ("tok_refund_decline".equals(tokens.getFirst())) {
+            result = new RefundResult(Outcome.DECLINED, null, "REFUND_DECLINED", "Refund declined by gateway");
+        } else {
+            result = new RefundResult(Outcome.SUCCEEDED, "mock_re_" + Ids.random(16), null, null);
+        }
+        jdbc.update("""
+                INSERT INTO mock_gateway_refunds (reference, charge_reference, outcome, provider_id, decline_code,
+                                                  message, amount)
+                VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (reference) DO NOTHING
+                """, request.reference(), request.chargeReference(), result.outcome().name(),
+                result.providerRefundId(), result.declineCode(), result.message(), request.amount());
+        return getRefund(request.reference()).orElseThrow(); // a concurrent call may have won the insert
     }
 
     @Override
     public Optional<RefundResult> getRefund(String reference) {
-        return Optional.ofNullable(refunds.get(reference));
+        List<RefundResult> rows = jdbc.query(
+                "SELECT outcome, provider_id, decline_code, message FROM mock_gateway_refunds WHERE reference = ?",
+                (rs, i) -> new RefundResult(Outcome.valueOf(rs.getString("outcome")), rs.getString("provider_id"),
+                        rs.getString("decline_code"), rs.getString("message")),
+                reference);
+        return rows.stream().findFirst();
     }
 
-    /** Test/demo hook: how many distinct charges the gateway has captured. */
-    public int capturedChargeCount() {
-        return (int) charges.values().stream().filter(c -> c.outcome() == Outcome.SUCCEEDED).count();
-    }
-
+    /** Stores the result unless a concurrent call already did, and returns whichever result was stored. */
     private ChargeResult record(ChargeRequest request, ChargeResult result) {
-        ChargeResult stored = charges.putIfAbsent(request.reference(), result);
-        chargeTokens.putIfAbsent(request.reference(), request.paymentMethodToken());
-        return stored != null ? stored : result;
+        jdbc.update("""
+                INSERT INTO mock_gateway_charges (reference, outcome, provider_id, decline_code, message, token,
+                                                  amount, currency)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (reference) DO NOTHING
+                """, request.reference(), result.outcome().name(), result.providerPaymentId(), result.declineCode(),
+                result.message(), request.paymentMethodToken(), request.amount(), request.currency());
+        return getCharge(request.reference()).orElseThrow();
     }
 
     private static ChargeResult succeeded() {

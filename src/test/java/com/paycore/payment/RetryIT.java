@@ -25,6 +25,9 @@ class RetryIT extends IntegrationTest {
     @Autowired
     PaymentRepository payments;
 
+    @Autowired
+    com.paycore.config.PayCoreProperties properties;
+
     @Test
     void timeoutAfterChargeIsResolvedByAskingTheProcessorNotByChargingAgain() throws Exception {
         Fixture f = fixture("tok_timeout_after_charge");
@@ -88,6 +91,24 @@ class RetryIT extends IntegrationTest {
         assertThat(recovered.getStatus()).isEqualTo(PaymentStatus.SUCCESS);
         assertThat(recovered.getProviderPaymentId()).isEqualTo(charged.providerPaymentId());
         assertThat(count("SELECT count(*) FROM ledger_entries WHERE payment_id = ?", payment.getId())).isEqualTo(2);
+    }
+
+    @Test
+    void gatewayRecordsSurviveARestartSoRecoveryWorksAfterAFullCrash() throws Exception {
+        Fixture f = fixture("tok_success");
+        Payment payment = paymentState.create(f.merchant().id(),
+                new CreatePaymentCommand(100_000, "INR", f.customerId(), f.paymentMethodId()), null, "test");
+        paymentState.claimAttempt(payment.getId(), false);
+        processor.charge(new PaymentProcessor.ChargeRequest(payment.getProcessorReference(), 100_000, "INR",
+                "tok_success"));
+
+        // The whole JVM restarts: a brand-new gateway client still sees the earlier charge.
+        MockPaymentProcessor afterRestart = new MockPaymentProcessor(properties, jdbc);
+        assertThat(afterRestart.getCharge(payment.getProcessorReference()))
+                .hasValueSatisfying(c -> assertThat(c.outcome()).isEqualTo(PaymentProcessor.Outcome.SUCCEEDED));
+
+        retryJob.runOnce();
+        assertThat(paymentStatus(payment.getId())).isEqualTo("SUCCESS");
     }
 
     @Test
