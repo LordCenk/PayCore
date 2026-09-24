@@ -82,6 +82,8 @@ Webhook Service        inbound provider webhooks + outbound merchant webhooks
 
 ### Build order (milestones)
 
+All of these are implemented.
+
 1. Java 21 + Spring Boot + PostgreSQL: merchants, customers, payments,
    `POST /payments`, state machine, mock processor → SUCCESS / FAILED
 2. Idempotency keys
@@ -90,7 +92,13 @@ Webhook Service        inbound provider webhooks + outbound merchant webhooks
 5. Kafka + transactional outbox
 6. Webhooks (inbound and outbound)
 7. Retries + reconciliation
-8. Observability (metrics, structured logs)
+8. Observability (metrics, structured logs, dashboards, alerts)
+9. Delivery: Docker image, OpenAPI docs, CI with an end-to-end smoke test
+
+The mock processor stores its records in `mock_gateway_*` tables. They model the
+external gateway's own storage (a real gateway remembers charges across PayCore
+restarts); PayCore's code only reaches them through the `PaymentProcessor`
+interface.
 
 ---
 
