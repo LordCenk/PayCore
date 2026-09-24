@@ -1,5 +1,7 @@
 # PayCore
 
+[![CI](https://github.com/LordCenk/PayCore/actions/workflows/ci.yml/badge.svg)](https://github.com/LordCenk/PayCore/actions/workflows/ci.yml)
+
 A simplified payment processing backend, built to handle the failures real
 payment systems face: duplicate requests, processor timeouts, crashes midway
 through a payment, and webhooks that arrive twice or out of order.
@@ -54,7 +56,14 @@ from waiting on Redis for each request.
 
 ## Run it
 
-You need Java 21 and Docker (for PostgreSQL, Redis and Kafka).
+Everything in containers (only Docker needed):
+
+```bash
+docker compose --profile app up -d --build    # PostgreSQL, Redis, Kafka and PayCore on :8080
+scripts/smoke-test.sh                         # end-to-end check: payment, refund, ledger, Kafka consumers
+```
+
+Or run PayCore from source (Java 21) against the same infrastructure:
 
 ```bash
 docker compose up -d          # PostgreSQL (paycore + paycore_test databases), Redis, single-node Kafka
@@ -62,6 +71,7 @@ docker compose up -d          # PostgreSQL (paycore + paycore_test databases), R
 ```
 
 The app starts on `http://localhost:8080` and applies the schema with Flyway.
+API docs: http://localhost:8080/swagger-ui.html (OpenAPI JSON at `/v3/api-docs`).
 
 | Setting | Default |
 | --- | --- |
@@ -79,11 +89,15 @@ published once the broker is back.
 mvn test
 ```
 
-80 tests: unit tests for the state machine, ledger and fraud rules, plus
+83 tests: unit tests for the state machine, ledger and fraud rules, plus
 integration tests (`*IT`) that run the whole app against the `paycore_test`
 database (override with `PAYCORE_TEST_DB_URL`) and Redis database 1 (`PAYCORE_TEST_REDIS_HOST`/`_PORT`). Every failure scenario in the
 design doc has a test, including concurrent duplicate requests and concurrent
 refunds. The Kafka tests use an in-process broker, so they don't need Docker.
+
+CI (`.github/workflows/ci.yml`) runs the tests against PostgreSQL and Redis on every
+push, then builds the Docker image, starts the whole stack with docker compose and
+runs `scripts/smoke-test.sh` against it.
 
 ## Try it
 
@@ -121,7 +135,9 @@ curl -s -X POST localhost:8080/api/v1/admin/reconciliation/run -H 'X-Admin-Key: 
 
 ### Mock processor test tokens
 
-The mock gateway never moves money. Use these tokens on a payment method to
+The mock gateway never moves money. It keeps its own records in the
+`mock_gateway_*` tables (the simulated gateway's state, not PayCore's), so like a
+real gateway it remembers charges across PayCore restarts. Use these tokens on a payment method to
 force an outcome; any other `tok_...` gets 70% success, 20% decline, 10% timeout.
 
 | Token | Behaviour |
@@ -174,6 +190,8 @@ src/main/java/com/paycore/
   ratelimit/       token-bucket rate limiter + interceptor
   observability/   metrics, metered processor decorator, outbox gauges, request-id filter
 observability/     Prometheus config + alert rules, Grafana provisioning and dashboard
+scripts/           end-to-end smoke test
+Dockerfile         multi-stage, layered, non-root image
   webhook/         inbound (processor) and outbound (merchant) webhooks
   reconciliation/  reconciliation service/job, admin endpoints
   audit/           audit log
