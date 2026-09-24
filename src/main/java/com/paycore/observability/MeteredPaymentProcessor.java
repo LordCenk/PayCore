@@ -63,7 +63,7 @@ public class MeteredPaymentProcessor implements PaymentProcessor {
         String result = "error";
         try {
             T value = call.call();
-            result = outcome.apply(value).toLowerCase();
+            result = outcome.apply(value).toLowerCase(java.util.Locale.ROOT);
             return value;
         } catch (ProcessorTimeoutException e) {
             result = "timeout";

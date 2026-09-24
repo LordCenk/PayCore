@@ -14,6 +14,9 @@ import org.junit.jupiter.api.Test;
 
 class RedisCachingIT extends IntegrationTest {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    io.micrometer.core.instrument.MeterRegistry meters;
+
     @Test
     void authenticatedMerchantIsCachedWithATtl() throws Exception {
         TestMerchant m = merchant();
@@ -55,6 +58,45 @@ class RedisCachingIT extends IntegrationTest {
                 .andExpect(jsonPath("$.id").value(id));
         pay(f, "order-1", 999).andExpect(status().isUnprocessableContent());
         assertThat(count("SELECT count(*) FROM payments")).isEqualTo(1);
+    }
+
+    @Test
+    void cacheHitsDoNotTakeADatabaseConnection() throws Exception {
+        TestMerchant m = merchant();
+        mvc.perform(get("/api/v1/merchants/" + m.id()).header("Authorization", m.auth())); // fills the cache
+        long before = connectionsAcquired();
+
+        for (int i = 0; i < 10; i++) {
+            mvc.perform(get("/api/v1/merchants/" + m.id()).header("Authorization", m.auth())).andExpect(status().isOk());
+        }
+
+        assertThat(connectionsAcquired() - before).isZero();
+    }
+
+    @Test
+    void corruptMerchantCacheEntryIsTreatedAsAMiss() throws Exception {
+        TestMerchant m = merchant();
+        String key = MerchantAuthCache.key(Hashing.sha256Hex(m.apiKey()));
+        redis.opsForValue().set(key, "{\"id\":\"x\",\"broken\":");
+
+        mvc.perform(get("/api/v1/merchants/" + m.id()).header("Authorization", m.auth()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(m.id()));
+        assertThat(redis.opsForValue().get(key)).contains(m.id()); // replaced with a good entry
+    }
+
+    @Test
+    void corruptIdempotencyCacheEntryFallsBackToTheDatabase() throws Exception {
+        Fixture f = fixture("tok_success");
+        String id = body(pay(f, "order-1", 100)).get("id").asString();
+        redis.opsForValue().set(IdempotencyCache.key(f.merchant().id(), "order-1"), "not json");
+
+        pay(f, "order-1", 100).andExpect(status().isCreated()).andExpect(jsonPath("$.id").value(id));
+        assertThat(count("SELECT count(*) FROM payments")).isEqualTo(1);
+    }
+
+    private long connectionsAcquired() {
+        return meters.find("hikaricp.connections.acquire").timer().count();
     }
 
     @Test

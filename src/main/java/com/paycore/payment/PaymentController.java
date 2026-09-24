@@ -63,7 +63,7 @@ public class PaymentController {
 
         String hash() {
             return Hashing.sha256Hex(String.join("\n", "POST /api/v1/payments", amount.toString(),
-                    currency.toUpperCase(), customerId, paymentMethodId));
+                    currency.toUpperCase(java.util.Locale.ROOT), customerId, paymentMethodId));
         }
     }
 

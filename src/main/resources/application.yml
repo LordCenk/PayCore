@@ -101,6 +101,8 @@ paycore:
   webhooks:
     max-attempts: 8
     timeout: 5s
+    # Keep false in any shared environment: true lets merchants point webhooks at internal services.
+    allow-private-targets: ${PAYCORE_WEBHOOKS_ALLOW_PRIVATE_TARGETS:false}
   redis:
     # After a Redis error, skip Redis for this long and use PostgreSQL directly.
     failure-cooldown: 5s

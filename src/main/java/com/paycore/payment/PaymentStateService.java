@@ -73,7 +73,7 @@ public class PaymentStateService {
     /** Validates, stores the payment, runs fraud rules, and leaves it PENDING (or FAILED if blocked). */
     @Transactional
     public Payment create(String merchantId, CreatePaymentCommand command, String idempotencyKey, String actor) {
-        String currency = command.currency().toUpperCase();
+        String currency = command.currency().toUpperCase(java.util.Locale.ROOT);
         if (!properties.supportedCurrencies().contains(currency)) {
             throw ApiException.badRequest("UNSUPPORTED_CURRENCY", "Currency " + command.currency() + " is not supported");
         }

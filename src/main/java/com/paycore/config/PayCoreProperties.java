@@ -34,7 +34,8 @@ public record PayCoreProperties(
             Duration outboxInterval,
             Duration webhookDeliveryInterval) {}
 
-    public record Webhooks(int maxAttempts, Duration timeout) {}
+    /** @param allowPrivateTargets allow webhook URLs on loopback/private networks (local development only) */
+    public record Webhooks(int maxAttempts, Duration timeout, boolean allowPrivateTargets) {}
 
     /**
      * @param publisher {@code kafka} or {@code logging} (no broker needed)

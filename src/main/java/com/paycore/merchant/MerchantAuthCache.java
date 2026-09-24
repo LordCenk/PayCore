@@ -7,6 +7,9 @@ import java.time.Duration;
 import java.util.Optional;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -16,6 +19,8 @@ import tools.jackson.databind.json.JsonMapper;
  */
 @Component
 public class MerchantAuthCache {
+
+    private static final Logger log = LoggerFactory.getLogger(MerchantAuthCache.class);
 
     private final StringRedisTemplate redis;
     private final RedisGuard guard;
@@ -36,7 +41,17 @@ public class MerchantAuthCache {
 
     public Optional<AuthenticatedMerchant> get(String apiKeyHash) {
         String cached = guard.call("merchant cache read", () -> redis.opsForValue().get(key(apiKeyHash)), null);
-        return cached == null ? Optional.empty() : Optional.of(json.readValue(cached, AuthenticatedMerchant.class));
+        if (cached == null) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(json.readValue(cached, AuthenticatedMerchant.class));
+        } catch (JacksonException e) {
+            // Corrupt, or written by a different version of this class: treat as a miss and drop it.
+            log.warn("dropping unreadable merchant cache entry: {}", e.getOriginalMessage());
+            evict(apiKeyHash);
+            return Optional.empty();
+        }
     }
 
     public void put(String apiKeyHash, AuthenticatedMerchant merchant) {

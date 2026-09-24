@@ -6,6 +6,9 @@ import java.time.Duration;
 import java.util.Optional;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
@@ -15,6 +18,8 @@ import tools.jackson.databind.json.JsonMapper;
  */
 @Component
 public class IdempotencyCache {
+
+    private static final Logger log = LoggerFactory.getLogger(IdempotencyCache.class);
 
     public record Completed(String requestHash, int status, String body) {}
 
@@ -38,7 +43,17 @@ public class IdempotencyCache {
     public Optional<Completed> get(String merchantId, String idempotencyKey) {
         String cached = guard.call("idempotency cache read",
                 () -> redis.opsForValue().get(key(merchantId, idempotencyKey)), null);
-        return cached == null ? Optional.empty() : Optional.of(json.readValue(cached, Completed.class));
+        if (cached == null) {
+            return Optional.empty();
+        }
+        try {
+            return Optional.of(json.readValue(cached, Completed.class));
+        } catch (JacksonException e) {
+            // Unreadable entry: fall back to PostgreSQL, which holds the same response.
+            log.warn("dropping unreadable idempotency cache entry: {}", e.getOriginalMessage());
+            guard.run("idempotency cache evict", () -> redis.delete(key(merchantId, idempotencyKey)));
+            return Optional.empty();
+        }
     }
 
     public void put(String merchantId, String idempotencyKey, Completed completed) {

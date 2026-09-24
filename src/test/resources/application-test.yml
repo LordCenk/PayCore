@@ -23,6 +23,8 @@ paycore:
   webhooks:
     max-attempts: 3
     timeout: 2s
+    # Tests deliver to a local HTTP server; WebhookSsrfIT turns this off.
+    allow-private-targets: true
   rate-limit:
     # High enough that only RateLimitIT hits it.
     capacity: 10000

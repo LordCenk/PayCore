@@ -45,17 +45,19 @@ public class WebhookDeliveryService {
     private final PayCoreProperties.Webhooks config;
     private final HttpClient http;
     private final PayCoreMetrics metrics;
+    private final WebhookTargetPolicy targetPolicy;
     private final Clock clock;
 
     public WebhookDeliveryService(WebhookDeliveryRepository deliveries, MerchantRepository merchants,
                                   PlatformTransactionManager txManager, PayCoreProperties properties,
-                                  PayCoreMetrics metrics, Clock clock) {
+                                  PayCoreMetrics metrics, WebhookTargetPolicy targetPolicy, Clock clock) {
         this.deliveries = deliveries;
         this.merchants = merchants;
         this.tx = new TransactionTemplate(txManager);
         this.config = properties.webhooks();
         this.http = HttpClient.newBuilder().connectTimeout(config.timeout()).build();
         this.metrics = metrics;
+        this.targetPolicy = targetPolicy;
         this.clock = clock;
     }
 
@@ -95,9 +97,31 @@ public class WebhookDeliveryService {
         return claimed;
     }
 
+    private record Attempt(Integer code, String error) {
+        boolean delivered() {
+            return code != null && code >= 200 && code < 300;
+        }
+    }
+
     private void send(Claimed c) {
-        Integer code = null;
-        String error = null;
+        Attempt attempt = targetPolicy.blockedReason(c.url())
+                .map(reason -> new Attempt(null, "blocked: " + reason))
+                .orElseGet(() -> post(c));
+        boolean delivered = attempt.delivered();
+        if (!delivered) {
+            log.warn("webhook delivery failed event={} code={} error={}", c.eventId(), attempt.code(), attempt.error());
+        }
+        String error = attempt.error() == null && !delivered ? "HTTP " + attempt.code() : attempt.error();
+        tx.executeWithoutResult(s -> deliveries.findById(c.id()).ifPresent(d -> {
+            Instant now = clock.instant();
+            d.recordAttempt(delivered, attempt.code(), error, config.maxAttempts(),
+                    now.plus(backoff(d.getAttemptCount() + 1)), now);
+            metrics.webhookDelivery(delivered ? "delivered"
+                    : d.getStatus() == WebhookDelivery.Status.FAILED ? "gave_up" : "failed_attempt");
+        }));
+    }
+
+    private Attempt post(Claimed c) {
         try {
             long timestamp = clock.instant().getEpochSecond();
             String signature = "t=" + timestamp + ",v1=" + Hashing.hmacSha256Hex(c.secret(), timestamp + "." + c.payload());
@@ -109,26 +133,13 @@ public class WebhookDeliveryService {
                     .header(SIGNATURE_HEADER, signature)
                     .POST(HttpRequest.BodyPublishers.ofString(c.payload()))
                     .build();
-            code = http.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
+            return new Attempt(http.send(request, HttpResponse.BodyHandlers.discarding()).statusCode(), null);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            error = "interrupted";
+            return new Attempt(null, "interrupted");
         } catch (Exception e) {
-            error = e.getClass().getSimpleName() + ": " + e.getMessage();
+            return new Attempt(null, e.getClass().getSimpleName() + ": " + e.getMessage());
         }
-        boolean delivered = code != null && code >= 200 && code < 300;
-        if (!delivered) {
-            log.warn("webhook delivery failed event={} code={} error={}", c.eventId(), code, error);
-        }
-        Integer finalCode = code;
-        String finalError = error == null && !delivered ? "HTTP " + code : error;
-        tx.executeWithoutResult(s -> deliveries.findById(c.id()).ifPresent(d -> {
-            Instant now = clock.instant();
-            d.recordAttempt(delivered, finalCode, finalError, config.maxAttempts(),
-                    now.plus(backoff(d.getAttemptCount() + 1)), now);
-            metrics.webhookDelivery(delivered ? "delivered"
-                    : d.getStatus() == WebhookDelivery.Status.FAILED ? "gave_up" : "failed_attempt");
-        }));
     }
 
     /** 5s, 10s, 20s ... capped at 1 hour. */

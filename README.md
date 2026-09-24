@@ -78,6 +78,7 @@ API docs: http://localhost:8080/swagger-ui.html (OpenAPI JSON at `/v3/api-docs`)
 | `PAYCORE_DB_URL`, `PAYCORE_DB_USER`, `PAYCORE_DB_PASSWORD` | `jdbc:postgresql://localhost:5432/paycore`, `paycore`, `paycore` |
 | `PAYCORE_REDIS_HOST`, `PAYCORE_REDIS_PORT` | `localhost`, `6379` |
 | `PAYCORE_KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` |
+| `PAYCORE_WEBHOOKS_ALLOW_PRIVATE_TARGETS` | `false`; merchant webhook URLs on loopback/private networks are rejected (SSRF protection). Set `true` only to test webhooks against a local receiver |
 | `PAYCORE_EVENTS_PUBLISHER` | `kafka`; set `logging` to run without Kafka (events are logged instead, and the consumers are off) |
 
 If Kafka is down, payments still work: events wait in the outbox and are
@@ -89,7 +90,7 @@ published once the broker is back.
 mvn test
 ```
 
-83 tests: unit tests for the state machine, ledger and fraud rules, plus
+118 tests: unit tests for the state machine, ledger and fraud rules, plus
 integration tests (`*IT`) that run the whole app against the `paycore_test`
 database (override with `PAYCORE_TEST_DB_URL`) and Redis database 1 (`PAYCORE_TEST_REDIS_HOST`/`_PORT`). Every failure scenario in the
 design doc has a test, including concurrent duplicate requests and concurrent
