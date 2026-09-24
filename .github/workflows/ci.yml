@@ -52,6 +52,21 @@ jobs:
         run: docker compose --profile app up -d --build
       - name: Smoke test
         run: scripts/smoke-test.sh http://localhost:8080
+      - name: Install Playwright and Chromium
+        run: |
+          npm install --no-save --prefix /tmp/pw playwright@1.56.1
+          /tmp/pw/node_modules/.bin/playwright install --with-deps chromium
+      - name: Demo page in a real browser
+        run: |
+          mkdir -p demo-screenshots
+          NODE_PATH=/tmp/pw/node_modules node scripts/demo-e2e.js http://localhost:8080 demo-screenshots
+      - name: Upload demo screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-screenshots
+          path: demo-screenshots/
+          if-no-files-found: ignore
       - name: Logs on failure
         if: failure()
         run: docker compose --profile app logs --no-color --tail 300

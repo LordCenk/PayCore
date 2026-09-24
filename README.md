@@ -73,6 +73,15 @@ docker compose up -d          # PostgreSQL (paycore + paycore_test databases), R
 The app starts on `http://localhost:8080` and applies the schema with Flyway.
 API docs: http://localhost:8080/swagger-ui.html (OpenAPI JSON at `/v3/api-docs`).
 
+### Demo page
+
+Open http://localhost:8080 for a live demo: pick a test card, pay, and watch the
+payment move through the state machine, the ledger entries and audit trail appear,
+and the Kafka consumers catch up. It also demonstrates an idempotent replay
+("send the same request again") and refunds. Each browser tab gets its own demo
+merchant. It is one static page (`src/main/resources/static/`) using only the
+public API; `scripts/demo-e2e.js` drives it in a real browser, and CI runs it.
+
 | Setting | Default |
 | --- | --- |
 | `PAYCORE_DB_URL`, `PAYCORE_DB_USER`, `PAYCORE_DB_PASSWORD` | `jdbc:postgresql://localhost:5432/paycore`, `paycore`, `paycore` |
@@ -90,7 +99,7 @@ published once the broker is back.
 mvn test
 ```
 
-118 tests: unit tests for the state machine, ledger and fraud rules, plus
+120 tests: unit tests for the state machine, ledger and fraud rules, plus
 integration tests (`*IT`) that run the whole app against the `paycore_test`
 database (override with `PAYCORE_TEST_DB_URL`) and Redis database 1 (`PAYCORE_TEST_REDIS_HOST`/`_PORT`). Every failure scenario in the
 design doc has a test, including concurrent duplicate requests and concurrent
@@ -98,7 +107,7 @@ refunds. The Kafka tests use an in-process broker, so they don't need Docker.
 
 CI (`.github/workflows/ci.yml`) runs the tests against PostgreSQL and Redis on every
 push, then builds the Docker image, starts the whole stack with docker compose and
-runs `scripts/smoke-test.sh` against it.
+runs `scripts/smoke-test.sh` and the browser test of the demo page against it.
 
 ## Try it
 
@@ -191,7 +200,7 @@ src/main/java/com/paycore/
   ratelimit/       token-bucket rate limiter + interceptor
   observability/   metrics, metered processor decorator, outbox gauges, request-id filter
 observability/     Prometheus config + alert rules, Grafana provisioning and dashboard
-scripts/           end-to-end smoke test
+scripts/           end-to-end smoke test, demo-page browser test
 Dockerfile         multi-stage, layered, non-root image
   webhook/         inbound (processor) and outbound (merchant) webhooks
   reconciliation/  reconciliation service/job, admin endpoints

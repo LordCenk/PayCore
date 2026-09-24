@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PayCore demo</title>
+  <meta name="description" content="Live demo of PayCore, a payment processing backend: idempotency, retries, refunds, a double-entry ledger and Kafka events.">
+  <link rel="stylesheet" href="/demo.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap top-inner">
+    <div>
+      <h1>PayCore <span class="badge">test mode</span></h1>
+      <p class="sub">A payment processing backend, live. Pick a test card, pay, and watch the payment move through
+        the system. No real money moves.</p>
+    </div>
+    <nav class="links">
+      <a href="/swagger-ui.html">API docs</a>
+      <a href="https://github.com/LordCenk/PayCore">Source</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="session-error" class="alert" hidden></div>
+
+  <section class="grid">
+    <!-- 1. Pay -->
+    <article class="card" aria-labelledby="pay-title">
+      <h2 id="pay-title"><span class="step">1</span> Make a payment</h2>
+      <form id="pay-form">
+        <label for="amount">Amount (INR)</label>
+        <div class="amount-row">
+          <span class="currency">₹</span>
+          <input id="amount" name="amount" type="number" min="1" step="1" value="1000" required>
+        </div>
+        <p class="hint">Over ₹2,00,000 is blocked by the fraud rules.</p>
+
+        <fieldset>
+          <legend>Test card</legend>
+          <div id="cards" class="cards"></div>
+        </fieldset>
+
+        <button id="pay-button" type="submit" class="primary">Pay</button>
+      </form>
+      <p class="hint">Each payment is sent with a fresh <code>Idempotency-Key</code> header.</p>
+    </article>
+
+    <!-- 2. Payment -->
+    <article class="card" aria-labelledby="payment-title">
+      <h2 id="payment-title"><span class="step">2</span> Payment</h2>
+      <div id="payment-empty" class="empty">Make a payment to see it here.</div>
+      <div id="payment" hidden>
+        <ol id="states" class="states" aria-label="Payment state"></ol>
+        <p id="status-note" class="note"></p>
+        <dl id="details" class="details"></dl>
+        <div class="actions">
+          <button id="replay-button" type="button">Send the same request again</button>
+          <button id="refund-button" type="button">Refund</button>
+        </div>
+        <p id="action-note" class="note" aria-live="polite"></p>
+      </div>
+    </article>
+  </section>
+
+  <section class="grid">
+    <article class="card" aria-labelledby="ledger-title">
+      <h2 id="ledger-title">Ledger</h2>
+      <p class="hint">Double-entry: every movement is a debit and an equal credit.</p>
+      <div class="table-wrap"><table id="ledger"></table></div>
+      <div id="ledger-empty" class="empty">No entries yet. They appear when a payment succeeds.</div>
+    </article>
+
+    <article class="card" aria-labelledby="audit-title">
+      <h2 id="audit-title">Audit trail</h2>
+      <p class="hint">Every state change, and who made it.</p>
+      <ol id="audit" class="audit"></ol>
+      <div id="audit-empty" class="empty">Nothing yet.</div>
+    </article>
+  </section>
+
+  <section class="grid">
+    <article class="card" aria-labelledby="events-title">
+      <h2 id="events-title">Downstream, via Kafka</h2>
+      <p class="hint">Consumers read payment events from Kafka and update these a moment later.</p>
+      <h3>Today's totals (analytics consumer)</h3>
+      <dl id="stats" class="details"></dl>
+      <h3>Customer notifications (notification consumer)</h3>
+      <ul id="notifications" class="plain"></ul>
+      <div id="notifications-empty" class="empty">None yet.</div>
+    </article>
+
+    <article class="card" aria-labelledby="log-title">
+      <h2 id="log-title">API calls</h2>
+      <p class="hint">What this page sent to PayCore, newest first.</p>
+      <ol id="log" class="log"></ol>
+    </article>
+  </section>
+
+  <section class="card" aria-labelledby="history-title">
+    <h2 id="history-title">Your payments</h2>
+    <div class="table-wrap"><table id="history"></table></div>
+    <div id="history-empty" class="empty">None yet.</div>
+  </section>
+</main>
+
+<footer class="wrap foot">
+  Java 21 · Spring Boot · PostgreSQL · Kafka · Redis.
+  A new demo merchant is created for each browser tab.
+</footer>
+
+<script src="/demo.js"></script>
+</body>
+</html>
