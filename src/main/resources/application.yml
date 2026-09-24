@@ -11,6 +11,13 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+  data:
+    redis:
+      host: ${PAYCORE_REDIS_HOST:localhost}
+      port: ${PAYCORE_REDIS_PORT:6379}
+      # Short timeouts: Redis is an optimisation here, never a reason to make a payment wait.
+      timeout: 500ms
+      connect-timeout: 500ms
   kafka:
     bootstrap-servers: ${PAYCORE_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
     producer:
@@ -74,6 +81,15 @@ paycore:
   webhooks:
     max-attempts: 8
     timeout: 5s
+  redis:
+    # After a Redis error, skip Redis for this long and use PostgreSQL directly.
+    failure-cooldown: 5s
+    merchant-cache-ttl: 60s
+  rate-limit:
+    enabled: true
+    # Token bucket per merchant: bursts up to `capacity`, sustained `refill-per-second`.
+    capacity: 100
+    refill-per-second: 20
   events:
     publisher: ${PAYCORE_EVENTS_PUBLISHER:kafka}
     topic: paycore.events

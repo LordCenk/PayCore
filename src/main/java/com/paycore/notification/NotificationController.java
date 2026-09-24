@@ -1,9 +1,9 @@
 package com.paycore.notification;
 
+import com.paycore.auth.AuthenticatedMerchant;
 import com.paycore.auth.CurrentMerchant;
 import com.paycore.common.ApiException;
 import com.paycore.customer.CustomerRepository;
-import com.paycore.merchant.Merchant;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -26,8 +26,8 @@ public class NotificationController {
                                        Instant createdAt) {}
 
     @GetMapping("/api/v1/customers/{id}/notifications")
-    public List<NotificationResponse> list(@PathVariable String id, @CurrentMerchant Merchant merchant) {
-        customers.findByIdAndMerchantId(id, merchant.getId()).orElseThrow(() -> ApiException.notFound("Customer", id));
+    public List<NotificationResponse> list(@PathVariable String id, @CurrentMerchant AuthenticatedMerchant merchant) {
+        customers.findByIdAndMerchantId(id, merchant.id()).orElseThrow(() -> ApiException.notFound("Customer", id));
         return jdbc.query("SELECT event_id, channel, recipient, template, created_at FROM notifications "
                         + "WHERE customer_id = ? ORDER BY id",
                 (rs, i) -> new NotificationResponse(rs.getString("event_id"), rs.getString("channel"),

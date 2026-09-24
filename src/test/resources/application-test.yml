@@ -1,4 +1,10 @@
 spring:
+  data:
+    redis:
+      host: ${PAYCORE_TEST_REDIS_HOST:localhost}
+      port: ${PAYCORE_TEST_REDIS_PORT:6379}
+      # Tests use their own Redis database and flush it before each test.
+      database: 1
   datasource:
     url: ${PAYCORE_TEST_DB_URL:jdbc:postgresql://localhost:5432/paycore_test}
     username: ${PAYCORE_DB_USER:paycore}
@@ -17,6 +23,10 @@ paycore:
   webhooks:
     max-attempts: 3
     timeout: 2s
+  rate-limit:
+    # High enough that only RateLimitIT hits it.
+    capacity: 10000
+    refill-per-second: 10000
   events:
     # Most tests don't need a broker; KafkaEventsIT switches this to kafka with an embedded broker.
     publisher: logging

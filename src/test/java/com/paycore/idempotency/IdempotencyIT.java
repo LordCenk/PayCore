@@ -92,9 +92,11 @@ class IdempotencyIT extends IntegrationTest {
     void crashedRequestIsResumedFromTheStoredPayment() throws Exception {
         Fixture f = fixture("tok_success");
         String id = body(pay(f, "order-5", 100)).get("id").asString();
-        // Simulate a crash after the payment was created but before the response was stored.
+        // Simulate a crash after the payment was created but before the response was stored
+        // (so it never reached PostgreSQL or the Redis replay cache).
         jdbc.update("UPDATE idempotency_keys SET status = 'IN_PROGRESS', response_body = NULL, "
                 + "updated_at = now() - interval '10 minutes'");
+        flushRedis();
 
         pay(f, "order-5", 100)
                 .andExpect(status().isOk())

@@ -9,6 +9,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Makes a POST safe to retry. See PAYCORE_DESIGN.md, failure scenario 1.
@@ -20,11 +22,14 @@ public class IdempotencyService {
     private static final int MAX_KEY_LENGTH = 255;
 
     private final IdempotencyKeyRepository keys;
+    private final IdempotencyCache cache;
     private final PayCoreProperties.Idempotency config;
     private final Clock clock;
 
-    public IdempotencyService(IdempotencyKeyRepository keys, PayCoreProperties properties, Clock clock) {
+    public IdempotencyService(IdempotencyKeyRepository keys, IdempotencyCache cache, PayCoreProperties properties,
+                              Clock clock) {
         this.keys = keys;
+        this.cache = cache;
         this.config = properties.idempotency();
         this.clock = clock;
     }
@@ -44,6 +49,14 @@ public class IdempotencyService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Outcome begin(String merchantId, String key, String requestHash) {
         validateKey(key);
+        // Fast path: a completed request is answered from Redis without a database round trip.
+        var cached = cache.get(merchantId, key);
+        if (cached.isPresent()) {
+            if (!cached.get().requestHash().equals(requestHash)) {
+                throw keyReused();
+            }
+            return new Replay(cached.get().status(), cached.get().body());
+        }
         Instant now = clock.instant();
         Instant expiresAt = now.plus(config.ttl());
         if (keys.tryInsert(merchantId, key, requestHash, now, expiresAt) == 1) {
@@ -57,8 +70,7 @@ public class IdempotencyService {
                 .orElseThrow(() -> ApiException.conflict("IDEMPOTENCY_KEY_IN_PROGRESS",
                         "A request with this Idempotency-Key is being processed; retry shortly"));
         if (!existing.getRequestHash().equals(requestHash)) {
-            throw new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, "IDEMPOTENCY_KEY_REUSED",
-                    "This Idempotency-Key was already used with a different request");
+            throw keyReused();
         }
         if (existing.getStatus() == IdempotencyKey.Status.COMPLETED) {
             return new Replay(existing.getResponseStatus(), existing.getResponseBody());
@@ -77,8 +89,15 @@ public class IdempotencyService {
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void complete(String merchantId, String key, int status, String body) {
+    public void complete(String merchantId, String key, String requestHash, int status, String body) {
         keys.complete(merchantId, key, status, body, clock.instant());
+        // Cache only after the database commit, so Redis never knows about a response PostgreSQL doesn't.
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                cache.put(merchantId, key, new IdempotencyCache.Completed(requestHash, status, body));
+            }
+        });
     }
 
     /** The request failed before creating anything (e.g. validation): let the client retry with the same key. */
@@ -91,6 +110,11 @@ public class IdempotencyService {
     @Transactional
     public int purgeExpired() {
         return keys.deleteExpired(clock.instant());
+    }
+
+    private static ApiException keyReused() {
+        return new ApiException(HttpStatus.UNPROCESSABLE_CONTENT, "IDEMPOTENCY_KEY_REUSED",
+                "This Idempotency-Key was already used with a different request");
     }
 
     private static void validateKey(String key) {

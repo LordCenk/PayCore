@@ -1,6 +1,5 @@
 package com.paycore.auth;
 
-import com.paycore.merchant.Merchant;
 import com.paycore.merchant.MerchantService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -44,7 +43,7 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         String header = request.getHeader("Authorization");
-        Merchant merchant = null;
+        AuthenticatedMerchant merchant = null;
         if (header != null && header.startsWith("Bearer ")) {
             merchant = merchants.authenticate(header.substring("Bearer ".length()).trim());
         }

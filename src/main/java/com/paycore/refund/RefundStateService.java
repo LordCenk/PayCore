@@ -5,7 +5,6 @@ import com.paycore.common.ApiException;
 import com.paycore.common.Ids;
 import com.paycore.idempotency.IdempotencyService;
 import com.paycore.ledger.LedgerService;
-import com.paycore.merchant.Merchant;
 import com.paycore.outbox.OutboxService;
 import com.paycore.payment.ApplyOutcome;
 import com.paycore.payment.Payment;
@@ -51,11 +50,11 @@ public class RefundStateService {
     }
 
     @Transactional
-    public Refund request(Merchant merchant, String paymentId, Long requestedAmount, String reason,
+    public Refund request(String merchantId, String paymentId, Long requestedAmount, String reason,
                           String idempotencyKey) {
         // The row lock serializes this with the processor result for the same payment.
         Payment payment = payments.findByIdForUpdate(paymentId)
-                .filter(p -> p.getMerchantId().equals(merchant.getId()))
+                .filter(p -> p.getMerchantId().equals(merchantId))
                 .orElseThrow(() -> ApiException.notFound("Payment", paymentId));
         if (payment.getStatus() != PaymentStatus.SUCCESS) {
             throw ApiException.conflict("INVALID_STATE_TRANSITION",
@@ -73,9 +72,9 @@ public class RefundStateService {
         Refund refund = new Refund(Ids.newId("re"), paymentId, amount, reason, Ids.newId("rref"), now);
         refunds.saveAndFlush(refund);
         if (idempotencyKey != null) {
-            idempotency.attachResource(merchant.getId(), idempotencyKey, refund.getId());
+            idempotency.attachResource(merchantId, idempotencyKey, refund.getId());
         }
-        String actor = "merchant:" + merchant.getId();
+        String actor = "merchant:" + merchantId;
         PaymentStatus previous = payment.transitionTo(PaymentStatus.REFUND_PENDING, now);
         audit.record("PAYMENT", paymentId, "STATUS_CHANGED", previous.name(), PaymentStatus.REFUND_PENDING.name(),
                 actor, Map.of("refundId", refund.getId()));

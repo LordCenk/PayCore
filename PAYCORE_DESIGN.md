@@ -645,14 +645,35 @@ PaymentService ──tx──▶ outbox_events ──relay──▶ topic paycor
 - **Dead-letter topic.** A record that still fails after 3 attempts, or can't
   be parsed at all, goes to `paycore.events.DLT` with the exception in its
   headers, so one bad message never blocks its partition.
-- **Known limit.** Two relay instances lock different batches (`SKIP LOCKED`)
-  and could publish them out of order. Today's consumers only count and notify,
-  so order across batches doesn't matter to them; a consumer that needs strict
-  order would need a single relay (or a leader-elected one).
+- **One relay at a time.** A Redis lock makes the relay run on one instance at
+  a time, so batches are published in order. If Redis is down, relays on
+  several instances can publish different batches (`SKIP LOCKED`) out of order;
+  today's consumers only count and notify, so that is acceptable.
 - **Merchant webhooks** are queued by the relay itself, in the same
   transaction that marks the event published, rather than by a Kafka consumer.
   Every event that reaches Kafka therefore also has a delivery row, even if the
   consumers are behind.
+
+### Redis (an optimisation, never a dependency)
+
+| Use | Key | Behaviour if Redis is down |
+| --- | --- | --- |
+| Rate limiting | `paycore:ratelimit:{merchantId}`: token bucket (capacity 100, refill 20/s), one atomic Lua script using Redis's clock | Requests are allowed |
+| Merchant auth cache | `paycore:merchant-auth:{apiKeyHash}`, TTL 60s | Looked up in PostgreSQL |
+| Idempotency replay cache | `paycore:idempotency:{merchantId}:{key}`, written after the DB commit, TTL 24h | Replayed from PostgreSQL |
+| Job locks | `paycore:lock:{outbox-relay,reconciliation}`, `SET NX PX`, released only by the holder's token | Job runs anyway (safe: row locks still apply) |
+
+All calls go through `RedisGuard`: after one failure it skips Redis for 5 seconds
+(a minimal circuit breaker) so an outage costs one timeout, not one per request.
+
+Trade-offs:
+- A merchant's status change takes up to 60s to apply unless the cache entry is
+  evicted (`MerchantAuthCache.evict`).
+- The locks have no fencing token. If a holder stalls past the TTL, two instances
+  can briefly run the same job; that is safe (row locks, idempotent writes), only
+  event ordering across relay batches becomes best-effort again.
+- Only *completed* idempotency keys are cached. Claiming a new key always goes
+  through PostgreSQL's unique constraint.
 
 ---
 

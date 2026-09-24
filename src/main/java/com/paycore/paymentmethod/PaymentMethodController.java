@@ -1,10 +1,10 @@
 package com.paycore.paymentmethod;
 
+import com.paycore.auth.AuthenticatedMerchant;
 import com.paycore.auth.CurrentMerchant;
 import com.paycore.common.ApiException;
 import com.paycore.common.Ids;
 import com.paycore.customer.CustomerRepository;
-import com.paycore.merchant.Merchant;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -58,8 +58,8 @@ public class PaymentMethodController {
     @ResponseStatus(HttpStatus.CREATED)
     @Transactional
     public PaymentMethodResponse create(@Valid @RequestBody CreatePaymentMethodRequest request,
-                                        @CurrentMerchant Merchant merchant) {
-        customers.findByIdAndMerchantId(request.customerId(), merchant.getId())
+                                        @CurrentMerchant AuthenticatedMerchant merchant) {
+        customers.findByIdAndMerchantId(request.customerId(), merchant.id())
                 .orElseThrow(() -> ApiException.notFound("Customer", request.customerId()));
         PaymentMethod pm = new PaymentMethod(Ids.newId("pm"), request.customerId(), request.type(),
                 "MOCK_GATEWAY", request.token(), request.lastFour(), clock.instant());
@@ -67,9 +67,9 @@ public class PaymentMethodController {
     }
 
     @GetMapping("/{id}")
-    public PaymentMethodResponse get(@PathVariable String id, @CurrentMerchant Merchant merchant) {
+    public PaymentMethodResponse get(@PathVariable String id, @CurrentMerchant AuthenticatedMerchant merchant) {
         PaymentMethod pm = paymentMethods.findById(id).orElseThrow(() -> ApiException.notFound("Payment method", id));
-        customers.findByIdAndMerchantId(pm.getCustomerId(), merchant.getId())
+        customers.findByIdAndMerchantId(pm.getCustomerId(), merchant.id())
                 .orElseThrow(() -> ApiException.notFound("Payment method", id));
         return PaymentMethodResponse.of(pm);
     }

@@ -7,6 +7,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
@@ -35,6 +37,9 @@ public abstract class IntegrationTest {
     @Autowired
     protected JsonMapper json;
 
+    @Autowired
+    protected StringRedisTemplate redis;
+
     private int counter;
 
     @BeforeEach
@@ -42,6 +47,19 @@ public abstract class IntegrationTest {
         jdbc.execute("TRUNCATE audit_logs, webhook_deliveries, outbox_events, webhook_events, idempotency_keys, "
                 + "ledger_entries, refunds, payments, payment_methods, customers, merchants, processed_events, "
                 + "merchant_daily_stats, notifications RESTART IDENTITY CASCADE");
+        flushRedis();
+    }
+
+    /** Tests use Redis database 1 (application-test.yml). Tolerates Redis being unreachable (RedisDownIT). */
+    protected void flushRedis() {
+        try {
+            redis.execute((RedisCallback<Object>) connection -> {
+                connection.serverCommands().flushDb();
+                return null;
+            });
+        } catch (RuntimeException e) {
+            // Redis not reachable: nothing to clean.
+        }
     }
 
     public record TestMerchant(String id, String apiKey, String webhookSecret) {

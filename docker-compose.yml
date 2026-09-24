@@ -12,6 +12,11 @@ services:
       - paycore-db:/var/lib/postgresql/data
       - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
 
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
   # Single-node Kafka in KRaft mode (no ZooKeeper), reachable from the host at localhost:9092.
   kafka:
     image: apache/kafka:4.1.0

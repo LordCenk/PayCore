@@ -1,10 +1,10 @@
 package com.paycore.refund;
 
+import com.paycore.auth.AuthenticatedMerchant;
 import com.paycore.auth.CurrentMerchant;
 import com.paycore.common.ApiException;
 import com.paycore.common.Hashing;
 import com.paycore.idempotency.IdempotentRequestHandler;
-import com.paycore.merchant.Merchant;
 import com.paycore.payment.PaymentRepository;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
@@ -40,14 +40,14 @@ public class RefundController {
     public ResponseEntity<?> create(@PathVariable String paymentId,
                                     @RequestHeader("Idempotency-Key") String idempotencyKey,
                                     @Valid @RequestBody(required = false) CreateRefundRequest body,
-                                    @CurrentMerchant Merchant merchant) {
+                                    @CurrentMerchant AuthenticatedMerchant merchant) {
         CreateRefundRequest request = body == null ? new CreateRefundRequest(null, null) : body;
         String hash = Hashing.sha256Hex(String.join("\n", "POST /api/v1/payments/" + paymentId + "/refund",
                 Objects.toString(request.amount()), Objects.toString(request.reason())));
-        return idempotent.execute(merchant.getId(), idempotencyKey, hash,
+        return idempotent.execute(merchant.id(), idempotencyKey, hash,
                 id -> RefundResponse.of(refundService.get(id)),
                 () -> {
-                    Refund refund = refundService.requestAndProcess(merchant, paymentId, request.amount(),
+                    Refund refund = refundService.requestAndProcess(merchant.id(), paymentId, request.amount(),
                             request.reason(), idempotencyKey);
                     HttpStatus status = refund.getStatus() == RefundStatus.PENDING ? HttpStatus.ACCEPTED
                             : HttpStatus.CREATED;
@@ -56,9 +56,9 @@ public class RefundController {
     }
 
     @GetMapping("/api/v1/refunds/{id}")
-    public RefundResponse get(@PathVariable String id, @CurrentMerchant Merchant merchant) {
+    public RefundResponse get(@PathVariable String id, @CurrentMerchant AuthenticatedMerchant merchant) {
         Refund refund = refundService.get(id);
-        payments.findByIdAndMerchantId(refund.getPaymentId(), merchant.getId())
+        payments.findByIdAndMerchantId(refund.getPaymentId(), merchant.id())
                 .orElseThrow(() -> ApiException.notFound("Refund", id));
         return RefundResponse.of(refund);
     }

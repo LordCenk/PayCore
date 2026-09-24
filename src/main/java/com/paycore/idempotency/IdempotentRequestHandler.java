@@ -36,11 +36,12 @@ public class IdempotentRequestHandler {
             case IdempotencyService.Resume r -> ResponseEntity.ok()
                     .header(REPLAYED_HEADER, "true")
                     .body(resume.apply(r.resourceId()));
-            case IdempotencyService.Proceed p -> proceed(merchantId, key, action);
+            case IdempotencyService.Proceed p -> proceed(merchantId, key, requestHash, action);
         };
     }
 
-    private ResponseEntity<?> proceed(String merchantId, String key, Supplier<ResponseEntity<?>> action) {
+    private ResponseEntity<?> proceed(String merchantId, String key, String requestHash,
+                                     Supplier<ResponseEntity<?>> action) {
         ResponseEntity<?> response;
         try {
             response = action.get();
@@ -49,7 +50,7 @@ public class IdempotentRequestHandler {
             idempotency.release(merchantId, key);
             throw e;
         }
-        idempotency.complete(merchantId, key, response.getStatusCode().value(),
+        idempotency.complete(merchantId, key, requestHash, response.getStatusCode().value(),
                 json.writeValueAsString(response.getBody()));
         return response;
     }

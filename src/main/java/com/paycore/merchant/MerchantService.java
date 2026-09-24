@@ -1,6 +1,7 @@
 package com.paycore.merchant;
 
 import com.paycore.audit.AuditService;
+import com.paycore.auth.AuthenticatedMerchant;
 import com.paycore.common.ApiException;
 import com.paycore.common.Hashing;
 import com.paycore.common.Ids;
@@ -15,11 +16,13 @@ public class MerchantService {
 
     private final MerchantRepository merchants;
     private final AuditService audit;
+    private final MerchantAuthCache cache;
     private final Clock clock;
 
-    public MerchantService(MerchantRepository merchants, AuditService audit, Clock clock) {
+    public MerchantService(MerchantRepository merchants, AuditService audit, MerchantAuthCache cache, Clock clock) {
         this.merchants = merchants;
         this.audit = audit;
+        this.cache = cache;
         this.clock = clock;
     }
 
@@ -41,10 +44,19 @@ public class MerchantService {
         return new Registration(merchant, apiKey);
     }
 
+    /** Returns the active merchant owning this API key, or null. Only active merchants are cached. */
     @Transactional(readOnly = true)
-    public Merchant authenticate(String apiKey) {
-        return merchants.findByApiKeyHash(Hashing.sha256Hex(apiKey))
-                .filter(Merchant::isActive)
-                .orElse(null);
+    public AuthenticatedMerchant authenticate(String apiKey) {
+        String hash = Hashing.sha256Hex(apiKey);
+        return cache.get(hash).orElseGet(() -> {
+            AuthenticatedMerchant merchant = merchants.findByApiKeyHash(hash)
+                    .filter(Merchant::isActive)
+                    .map(AuthenticatedMerchant::of)
+                    .orElse(null);
+            if (merchant != null) {
+                cache.put(hash, merchant);
+            }
+            return merchant;
+        });
     }
 }

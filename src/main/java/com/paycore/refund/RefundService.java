@@ -1,7 +1,6 @@
 package com.paycore.refund;
 
 import com.paycore.common.ApiException;
-import com.paycore.merchant.Merchant;
 import com.paycore.payment.Payment;
 import com.paycore.payment.PaymentRepository;
 import com.paycore.processor.PaymentProcessor;
@@ -29,10 +28,10 @@ public class RefundService {
         this.processor = processor;
     }
 
-    public Refund requestAndProcess(Merchant merchant, String paymentId, Long amount, String reason,
+    public Refund requestAndProcess(String merchantId, String paymentId, Long amount, String reason,
                                     String idempotencyKey) {
-        Refund refund = state.request(merchant, paymentId, amount, reason, idempotencyKey);
-        process(refund.getId(), "merchant:" + merchant.getId());
+        Refund refund = state.request(merchantId, paymentId, amount, reason, idempotencyKey);
+        process(refund.getId(), "merchant:" + merchantId);
         return get(refund.getId());
     }
 

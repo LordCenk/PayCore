@@ -2,7 +2,6 @@ package com.paycore.payment;
 
 import com.paycore.common.ApiException;
 import com.paycore.config.PayCoreProperties;
-import com.paycore.merchant.Merchant;
 import com.paycore.paymentmethod.PaymentMethodRepository;
 import com.paycore.processor.PaymentProcessor;
 import com.paycore.processor.PaymentProcessor.ChargeRequest;
@@ -44,9 +43,9 @@ public class PaymentService {
         this.properties = properties;
     }
 
-    public Payment createAndProcess(Merchant merchant, CreatePaymentCommand command, String idempotencyKey) {
-        String actor = "merchant:" + merchant.getId();
-        Payment payment = state.create(merchant, command, idempotencyKey, actor);
+    public Payment createAndProcess(String merchantId, CreatePaymentCommand command, String idempotencyKey) {
+        String actor = "merchant:" + merchantId;
+        Payment payment = state.create(merchantId, command, idempotencyKey, actor);
         if (payment.getStatus() == PaymentStatus.PENDING) {
             attempt(payment.getId(), false, actor);
         }

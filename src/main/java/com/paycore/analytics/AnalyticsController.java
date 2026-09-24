@@ -1,8 +1,8 @@
 package com.paycore.analytics;
 
+import com.paycore.auth.AuthenticatedMerchant;
 import com.paycore.auth.CurrentMerchant;
 import com.paycore.common.ApiException;
-import com.paycore.merchant.Merchant;
 import java.sql.Date;
 import java.time.Clock;
 import java.time.LocalDate;
@@ -32,7 +32,7 @@ public class AnalyticsController {
     @GetMapping("/api/v1/analytics/daily")
     public List<DailyStats> daily(@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
                                   @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
-                                  @CurrentMerchant Merchant merchant) {
+                                  @CurrentMerchant AuthenticatedMerchant merchant) {
         LocalDate end = to != null ? to : LocalDate.ofInstant(clock.instant(), ZoneOffset.UTC);
         LocalDate start = from != null ? from : end.minusDays(30);
         if (start.isAfter(end)) {
@@ -48,6 +48,6 @@ public class AnalyticsController {
                 (rs, i) -> new DailyStats(rs.getDate("day").toLocalDate(), rs.getString("currency"),
                         rs.getLong("payments_succeeded"), rs.getLong("amount_succeeded"),
                         rs.getLong("payments_failed"), rs.getLong("refunds_succeeded"), rs.getLong("amount_refunded")),
-                merchant.getId(), Date.valueOf(start), Date.valueOf(end));
+                merchant.id(), Date.valueOf(start), Date.valueOf(end));
     }
 }

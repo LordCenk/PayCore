@@ -1,5 +1,6 @@
 package com.paycore.merchant;
 
+import com.paycore.auth.AuthenticatedMerchant;
 import com.paycore.auth.CurrentMerchant;
 import com.paycore.common.ApiException;
 import jakarta.validation.Valid;
@@ -34,9 +35,8 @@ public class MerchantController {
 
     public record MerchantResponse(String id, String name, String email, String status, String webhookUrl,
                                    Instant createdAt) {
-        static MerchantResponse of(Merchant m) {
-            return new MerchantResponse(m.getId(), m.getName(), m.getEmail(), m.getStatus().name(),
-                    m.getWebhookUrl(), m.getCreatedAt());
+        static MerchantResponse of(AuthenticatedMerchant m) {
+            return new MerchantResponse(m.id(), m.name(), m.email(), m.status(), m.webhookUrl(), m.createdAt());
         }
     }
 
@@ -46,14 +46,14 @@ public class MerchantController {
     @ResponseStatus(HttpStatus.CREATED)
     public CreateMerchantResponse create(@Valid @RequestBody CreateMerchantRequest request) {
         MerchantService.Registration r = service.register(request.name(), request.email(), request.webhookUrl());
-        return new CreateMerchantResponse(MerchantResponse.of(r.merchant()), r.apiKey(),
+        return new CreateMerchantResponse(MerchantResponse.of(AuthenticatedMerchant.of(r.merchant())), r.apiKey(),
                 r.merchant().getWebhookSecret());
     }
 
     /** A merchant can only read its own record. */
     @GetMapping("/{id}")
-    public MerchantResponse get(@PathVariable String id, @CurrentMerchant Merchant merchant) {
-        if (!merchant.getId().equals(id)) {
+    public MerchantResponse get(@PathVariable String id, @CurrentMerchant AuthenticatedMerchant merchant) {
+        if (!merchant.id().equals(id)) {
             throw ApiException.notFound("Merchant", id);
         }
         return MerchantResponse.of(merchant);

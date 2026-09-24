@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.paycore.merchant.MerchantRepository;
 import com.paycore.processor.MockPaymentProcessor;
 import com.paycore.processor.PaymentProcessor;
 import com.paycore.support.IntegrationTest;
@@ -22,9 +21,6 @@ class RetryIT extends IntegrationTest {
 
     @Autowired
     MockPaymentProcessor processor;
-
-    @Autowired
-    MerchantRepository merchants;
 
     @Autowired
     PaymentRepository payments;
@@ -78,7 +74,7 @@ class RetryIT extends IntegrationTest {
     void crashAfterProcessorSuccessIsRecoveredWithoutASecondCharge() throws Exception {
         Fixture f = fixture("tok_success");
         // tx1 committed: payment is PENDING with its processor reference.
-        Payment payment = paymentState.create(merchants.findById(f.merchant().id()).orElseThrow(),
+        Payment payment = paymentState.create(f.merchant().id(),
                 new CreatePaymentCommand(100_000, "INR", f.customerId(), f.paymentMethodId()), null, "test");
         paymentState.claimAttempt(payment.getId(), false);
         // The processor charged the card, then PayCore "crashed" before recording the result.

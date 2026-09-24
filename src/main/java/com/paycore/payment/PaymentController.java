@@ -2,13 +2,13 @@ package com.paycore.payment;
 
 import com.paycore.audit.AuditLog;
 import com.paycore.audit.AuditLogRepository;
+import com.paycore.auth.AuthenticatedMerchant;
 import com.paycore.auth.CurrentMerchant;
 import com.paycore.common.ApiException;
 import com.paycore.common.Hashing;
 import com.paycore.idempotency.IdempotentRequestHandler;
 import com.paycore.ledger.LedgerEntry;
 import com.paycore.ledger.LedgerEntryRepository;
-import com.paycore.merchant.Merchant;
 import com.paycore.refund.Refund;
 import com.paycore.refund.RefundRepository;
 import jakarta.validation.Valid;
@@ -74,11 +74,11 @@ public class PaymentController {
     @PostMapping
     public ResponseEntity<?> create(@RequestHeader("Idempotency-Key") String idempotencyKey,
                                     @Valid @RequestBody CreatePaymentRequest request,
-                                    @CurrentMerchant Merchant merchant) {
-        return idempotent.execute(merchant.getId(), idempotencyKey, request.hash(),
+                                    @CurrentMerchant AuthenticatedMerchant merchant) {
+        return idempotent.execute(merchant.id(), idempotencyKey, request.hash(),
                 id -> PaymentResponse.of(paymentService.get(id)),
                 () -> {
-                    Payment payment = paymentService.createAndProcess(merchant,
+                    Payment payment = paymentService.createAndProcess(merchant.id(),
                             new CreatePaymentCommand(request.amount(), request.currency(), request.customerId(),
                                     request.paymentMethodId()),
                             idempotencyKey);
@@ -89,31 +89,31 @@ public class PaymentController {
     }
 
     @GetMapping("/{id}")
-    public PaymentResponse get(@PathVariable String id, @CurrentMerchant Merchant merchant) {
+    public PaymentResponse get(@PathVariable String id, @CurrentMerchant AuthenticatedMerchant merchant) {
         return PaymentResponse.of(find(id, merchant));
     }
 
     @GetMapping
     public List<PaymentResponse> list(@RequestParam(required = false) PaymentStatus status,
                                       @RequestParam(defaultValue = "20") int limit,
-                                      @CurrentMerchant Merchant merchant) {
+                                      @CurrentMerchant AuthenticatedMerchant merchant) {
         PageRequest page = PageRequest.of(0, Math.min(Math.max(limit, 1), 100));
         List<Payment> result = status == null
-                ? payments.findByMerchantIdOrderByCreatedAtDesc(merchant.getId(), page)
-                : payments.findByMerchantIdAndStatusOrderByCreatedAtDesc(merchant.getId(), status, page);
+                ? payments.findByMerchantIdOrderByCreatedAtDesc(merchant.id(), page)
+                : payments.findByMerchantIdAndStatusOrderByCreatedAtDesc(merchant.id(), status, page);
         return result.stream().map(PaymentResponse::of).toList();
     }
 
     @PostMapping("/{id}/cancel")
-    public PaymentResponse cancel(@PathVariable String id, @CurrentMerchant Merchant merchant) {
-        return PaymentResponse.of(paymentState.cancel(merchant, id));
+    public PaymentResponse cancel(@PathVariable String id, @CurrentMerchant AuthenticatedMerchant merchant) {
+        return PaymentResponse.of(paymentState.cancel(merchant.id(), id));
     }
 
     public record LedgerEntryResponse(String transactionId, String refundId, String accountId, String entryType,
                                       long amount, String currency) {}
 
     @GetMapping("/{id}/ledger")
-    public List<LedgerEntryResponse> ledger(@PathVariable String id, @CurrentMerchant Merchant merchant) {
+    public List<LedgerEntryResponse> ledger(@PathVariable String id, @CurrentMerchant AuthenticatedMerchant merchant) {
         find(id, merchant);
         return ledger.findByPaymentIdOrderByIdAsc(id).stream()
                 .map((LedgerEntry e) -> new LedgerEntryResponse(e.getTransactionId(), e.getRefundId(),
@@ -126,7 +126,7 @@ public class PaymentController {
 
     /** The payment's full history, including its refunds. */
     @GetMapping("/{id}/audit-logs")
-    public List<AuditLogResponse> auditLogs(@PathVariable String id, @CurrentMerchant Merchant merchant) {
+    public List<AuditLogResponse> auditLogs(@PathVariable String id, @CurrentMerchant AuthenticatedMerchant merchant) {
         find(id, merchant);
         List<String> entityIds = new ArrayList<>();
         entityIds.add(id);
@@ -137,8 +137,8 @@ public class PaymentController {
                 .toList();
     }
 
-    private Payment find(String id, Merchant merchant) {
-        return payments.findByIdAndMerchantId(id, merchant.getId())
+    private Payment find(String id, AuthenticatedMerchant merchant) {
+        return payments.findByIdAndMerchantId(id, merchant.id())
                 .orElseThrow(() -> ApiException.notFound("Payment", id));
     }
 }

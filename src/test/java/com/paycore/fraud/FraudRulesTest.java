@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 class FraudRulesTest {
 
     private static final PayCoreProperties PROPERTIES = new PayCoreProperties(Set.of("INR"), null, null, null,
-            new PayCoreProperties.Fraud(10_000, 5, Duration.ofMinutes(1), Set.of("tok_blocked")), null, null, null, null);
+            new PayCoreProperties.Fraud(10_000, 5, Duration.ofMinutes(1), Set.of("tok_blocked")), null, null, null, null, null, null);
 
     private static FraudContext context(long amount, String token) {
         return new FraudContext("m", "c", token, amount, "INR");

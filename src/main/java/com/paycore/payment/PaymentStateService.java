@@ -11,7 +11,6 @@ import com.paycore.fraud.FraudResult;
 import com.paycore.fraud.FraudService;
 import com.paycore.idempotency.IdempotencyService;
 import com.paycore.ledger.LedgerService;
-import com.paycore.merchant.Merchant;
 import com.paycore.outbox.OutboxService;
 import com.paycore.paymentmethod.PaymentMethod;
 import com.paycore.paymentmethod.PaymentMethodRepository;
@@ -69,7 +68,7 @@ public class PaymentStateService {
 
     /** Validates, stores the payment, runs fraud rules, and leaves it PENDING (or FAILED if blocked). */
     @Transactional
-    public Payment create(Merchant merchant, CreatePaymentCommand command, String idempotencyKey, String actor) {
+    public Payment create(String merchantId, CreatePaymentCommand command, String idempotencyKey, String actor) {
         String currency = command.currency().toUpperCase();
         if (!properties.supportedCurrencies().contains(currency)) {
             throw ApiException.badRequest("UNSUPPORTED_CURRENCY", "Currency " + command.currency() + " is not supported");
@@ -77,7 +76,7 @@ public class PaymentStateService {
         if (command.amount() <= 0) {
             throw ApiException.badRequest("INVALID_AMOUNT", "amount must be positive");
         }
-        customers.findByIdAndMerchantId(command.customerId(), merchant.getId())
+        customers.findByIdAndMerchantId(command.customerId(), merchantId)
                 .orElseThrow(() -> ApiException.notFound("Customer", command.customerId()));
         PaymentMethod method = paymentMethods.findById(command.paymentMethodId())
                 .filter(pm -> pm.getCustomerId().equals(command.customerId()))
@@ -87,20 +86,20 @@ public class PaymentStateService {
         }
 
         // Evaluate before inserting so the velocity rule counts only earlier payments.
-        FraudResult fraudResult = fraud.evaluate(new FraudContext(merchant.getId(), command.customerId(),
+        FraudResult fraudResult = fraud.evaluate(new FraudContext(merchantId, command.customerId(),
                 method.getToken(), command.amount(), currency));
 
         Instant now = clock.instant();
-        Payment payment = new Payment(Ids.newId("pay"), merchant.getId(), command.customerId(),
+        Payment payment = new Payment(Ids.newId("pay"), merchantId, command.customerId(),
                 command.paymentMethodId(), command.amount(), currency, processor.name(), Ids.newId("ref"),
                 idempotencyKey, now);
         payments.save(payment);
         if (idempotencyKey != null) {
-            idempotency.attachResource(merchant.getId(), idempotencyKey, payment.getId());
+            idempotency.attachResource(merchantId, idempotencyKey, payment.getId());
         }
         audit.record("PAYMENT", payment.getId(), "CREATED", null, PaymentStatus.CREATED.name(), actor,
                 Map.of("amount", command.amount(), "currency", currency));
-        outbox.enqueue("PAYMENT", payment.getId(), payment.getId(), merchant.getId(), PaymentEvents.CREATED, PaymentEvents.data(payment));
+        outbox.enqueue("PAYMENT", payment.getId(), payment.getId(), merchantId, PaymentEvents.CREATED, PaymentEvents.data(payment));
 
         for (FraudDecision flag : fraudResult.flags()) {
             audit.record("PAYMENT", payment.getId(), "FRAUD_FLAGGED", null, null, "system:fraud",
@@ -111,7 +110,7 @@ public class PaymentStateService {
         if (block.isPresent()) {
             payment.recordFailure("FRAUD_SUSPECTED", block.get().reason());
             changeStatus(payment, PaymentStatus.FAILED, "system:fraud", Map.of("rule", block.get().rule()));
-            outbox.enqueue("PAYMENT", payment.getId(), payment.getId(), merchant.getId(), PaymentEvents.FAILED, PaymentEvents.data(payment));
+            outbox.enqueue("PAYMENT", payment.getId(), payment.getId(), merchantId, PaymentEvents.FAILED, PaymentEvents.data(payment));
             return payment;
         }
 
@@ -206,12 +205,12 @@ public class PaymentStateService {
     }
 
     @Transactional
-    public Payment cancel(Merchant merchant, String paymentId) {
+    public Payment cancel(String merchantId, String paymentId) {
         Payment payment = payments.findByIdForUpdate(paymentId)
-                .filter(p -> p.getMerchantId().equals(merchant.getId()))
+                .filter(p -> p.getMerchantId().equals(merchantId))
                 .orElseThrow(() -> ApiException.notFound("Payment", paymentId));
         payment.stopRetrying();
-        changeStatus(payment, PaymentStatus.CANCELLED, "merchant:" + merchant.getId(), null);
+        changeStatus(payment, PaymentStatus.CANCELLED, "merchant:" + merchantId, null);
         outbox.enqueue("PAYMENT", paymentId, paymentId, payment.getMerchantId(), PaymentEvents.CANCELLED,
                 PaymentEvents.data(payment));
         return payment;

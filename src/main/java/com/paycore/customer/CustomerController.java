@@ -1,9 +1,9 @@
 package com.paycore.customer;
 
+import com.paycore.auth.AuthenticatedMerchant;
 import com.paycore.auth.CurrentMerchant;
 import com.paycore.common.ApiException;
 import com.paycore.common.Ids;
-import com.paycore.merchant.Merchant;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
@@ -44,15 +44,15 @@ public class CustomerController {
     @ResponseStatus(HttpStatus.CREATED)
     @Transactional
     public CustomerResponse create(@Valid @RequestBody CreateCustomerRequest request,
-                                   @CurrentMerchant Merchant merchant) {
-        Customer customer = new Customer(Ids.newId("cust"), merchant.getId(), request.name(), request.email(),
+                                   @CurrentMerchant AuthenticatedMerchant merchant) {
+        Customer customer = new Customer(Ids.newId("cust"), merchant.id(), request.name(), request.email(),
                 clock.instant());
         return CustomerResponse.of(customers.save(customer));
     }
 
     @GetMapping("/{id}")
-    public CustomerResponse get(@PathVariable String id, @CurrentMerchant Merchant merchant) {
-        return customers.findByIdAndMerchantId(id, merchant.getId())
+    public CustomerResponse get(@PathVariable String id, @CurrentMerchant AuthenticatedMerchant merchant) {
+        return customers.findByIdAndMerchantId(id, merchant.id())
                 .map(CustomerResponse::of)
                 .orElseThrow(() -> ApiException.notFound("Customer", id));
     }

@@ -1,6 +1,5 @@
 package com.paycore.auth;
 
-import com.paycore.merchant.Merchant;
 import org.springframework.core.MethodParameter;
 import org.springframework.web.bind.support.WebDataBinderFactory;
 import org.springframework.web.context.request.NativeWebRequest;
@@ -13,7 +12,7 @@ class CurrentMerchantResolver implements HandlerMethodArgumentResolver {
     @Override
     public boolean supportsParameter(MethodParameter parameter) {
         return parameter.hasParameterAnnotation(CurrentMerchant.class)
-                && Merchant.class.equals(parameter.getParameterType());
+                && AuthenticatedMerchant.class.equals(parameter.getParameterType());
     }
 
     @Override
