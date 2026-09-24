@@ -446,11 +446,25 @@ Constraint: **UNIQUE `(provider, event_id)`**. Providers retry webhooks.
 | -------------- | ----------- | -------------------------------------- |
 | id             | BIGSERIAL PK|                                        |
 | aggregate_type | VARCHAR     | `PAYMENT`, `REFUND`                    |
+| event_id       | VARCHAR     | UNIQUE; consumers de-duplicate on it   |
 | aggregate_id   | VARCHAR     | `pay_123`                              |
+| partition_key  | VARCHAR     | Kafka key: the payment id, also for refund events |
+| merchant_id    | VARCHAR     | used to fan out merchant webhooks      |
 | event_type     | VARCHAR     | `PaymentSucceeded`, `PaymentFailed`, … |
-| payload        | JSONB       |                                        |
-| published_at   | TIMESTAMPTZ | null until relayed to Kafka            |
+| payload        | TEXT        | JSON                                   |
+| published_at   | TIMESTAMPTZ | null until Kafka acknowledged it       |
 | created_at     | TIMESTAMPTZ |                                        |
+
+### processed_events, merchant_daily_stats, notifications (Kafka consumers)
+
+- `processed_events (consumer, event_id)`: primary key. Each consumer inserts
+  the event id in the same transaction as its side effect, and skips the event
+  if the row already exists (idempotent consumer).
+- `merchant_daily_stats`: per merchant, day and currency: payments succeeded
+  and failed, amount succeeded, refunds and amount refunded. Built by the
+  analytics consumer.
+- `notifications`: customer receipts produced by the notification consumer
+  (sending is simulated), `event_id` UNIQUE.
 
 ### audit_logs
 
@@ -584,7 +598,16 @@ the provider stops retrying. Processing happens after storage.
 | Method | Path                                | Description                     |
 | ------ | ----------------------------------- | ------------------------------- |
 | POST   | `/api/v1/admin/reconciliation/run`  | Trigger a reconciliation run    |
-| GET    | `/api/v1/admin/audit-logs?entityId=`| Read the audit trail            |
+| POST   | `/api/v1/admin/retries/run`         | Trigger the payment retry job   |
+
+The audit trail is exposed per payment instead: `GET /api/v1/payments/{id}/audit-logs`.
+
+### Read models (fed by Kafka consumers, eventually consistent)
+
+| Method | Path                                      | Description                        |
+| ------ | ----------------------------------------- | ---------------------------------- |
+| GET    | `/api/v1/analytics/daily?from=&to=`       | Merchant's daily totals            |
+| GET    | `/api/v1/customers/{id}/notifications`    | Receipts sent to a customer        |
 
 ### Events published to Kafka
 
@@ -593,9 +616,43 @@ PaymentCreated   PaymentSucceeded   PaymentFailed   PaymentCancelled
 RefundRequested  RefundSucceeded    RefundFailed
 ```
 
-Each event carries `eventId`, `paymentId`, `merchantId`, `status`, `amount`,
-`currency`, `occurredAt`. Kafka key = `paymentId`, so events for one payment
-stay ordered within a partition.
+Message format: `{eventId, type, occurredAt, data}`, where `data` holds
+`paymentId`, `merchantId`, `customerId`, `status`, `amount`, `currency` (plus
+`refundId` or `failureCode` where relevant). Headers `eventId` and `eventType`.
+
+```text
+PaymentService ──tx──▶ outbox_events ──relay──▶ topic paycore.events (key = paymentId)
+                                                   │
+                         ┌─────────────────────────┼──────────────────────────┐
+                         ▼                         ▼                          ▼
+              group paycore-analytics   group paycore-notifications   paycore.events.DLT
+              merchant_daily_stats      notifications                  (records that failed 3 times,
+                                                                        or are malformed)
+```
+
+- **One topic, keyed by payment id.** A payment's events and its refund's
+  events land on the same partition, so they are consumed in order.
+- **Publishing.** The relay sends a batch and waits until Kafka acknowledges
+  every record (`acks=all`, idempotent producer). Only then does it mark the
+  rows published, in the same transaction that locked them. If Kafka is down,
+  the transaction rolls back and the events wait in the outbox. A crash after
+  the acknowledgement but before the commit republishes the batch, so delivery
+  is **at least once**.
+- **Consumers are idempotent.** Each consumer group records `(consumer,
+  eventId)` in `processed_events` in the same transaction as its effect, so a
+  redelivered event changes nothing. At-least-once delivery plus idempotent
+  consumers gives effectively-once processing.
+- **Dead-letter topic.** A record that still fails after 3 attempts, or can't
+  be parsed at all, goes to `paycore.events.DLT` with the exception in its
+  headers, so one bad message never blocks its partition.
+- **Known limit.** Two relay instances lock different batches (`SKIP LOCKED`)
+  and could publish them out of order. Today's consumers only count and notify,
+  so order across batches doesn't matter to them; a consumer that needs strict
+  order would need a single relay (or a leader-elected one).
+- **Merchant webhooks** are queued by the relay itself, in the same
+  transaction that marks the event published, rather than by a Kafka consumer.
+  Every event that reaches Kafka therefore also has a delivery row, even if the
+  consumers are behind.
 
 ---
 

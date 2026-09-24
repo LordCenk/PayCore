@@ -40,7 +40,8 @@ public abstract class IntegrationTest {
     @BeforeEach
     void cleanDatabase() {
         jdbc.execute("TRUNCATE audit_logs, webhook_deliveries, outbox_events, webhook_events, idempotency_keys, "
-                + "ledger_entries, refunds, payments, payment_methods, customers, merchants RESTART IDENTITY CASCADE");
+                + "ledger_entries, refunds, payments, payment_methods, customers, merchants, processed_events, "
+                + "merchant_daily_stats, notifications RESTART IDENTITY CASCADE");
     }
 
     public record TestMerchant(String id, String apiKey, String webhookSecret) {

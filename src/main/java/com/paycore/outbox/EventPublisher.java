@@ -1,7 +1,12 @@
 package com.paycore.outbox;
 
-/** Where outbox events go. A Kafka implementation replaces {@link LoggingEventPublisher} in a later milestone. */
+import java.util.List;
+
+/**
+ * Where outbox events go: {@link KafkaEventPublisher}, or {@link LoggingEventPublisher} when running without a broker.
+ * Implementations must return only once every event is durably accepted, and throw otherwise.
+ */
 public interface EventPublisher {
 
-    void publish(OutboxEvent event);
+    void publishAll(List<OutboxEvent> events);
 }

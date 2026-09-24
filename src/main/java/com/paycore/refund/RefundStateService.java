@@ -81,7 +81,7 @@ public class RefundStateService {
                 actor, Map.of("refundId", refund.getId()));
         audit.record("REFUND", refund.getId(), "CREATED", null, RefundStatus.PENDING.name(), actor,
                 Map.of("amount", amount));
-        outbox.enqueue("REFUND", refund.getId(), payment.getMerchantId(), REQUESTED, data(payment, refund));
+        outbox.enqueue("REFUND", refund.getId(), payment.getId(), payment.getMerchantId(), REQUESTED, data(payment, refund));
         return refund;
     }
 
@@ -111,7 +111,7 @@ public class RefundStateService {
             audit.record("REFUND", refundId, "STATUS_CHANGED", "PENDING", "SUCCEEDED", actor, Map.of("ledgerTx", tx));
             audit.record("PAYMENT", paymentId, "STATUS_CHANGED", "REFUND_PENDING", "REFUNDED", actor,
                     Map.of("refundId", refundId));
-            outbox.enqueue("REFUND", refundId, payment.getMerchantId(), SUCCEEDED, data(payment, refund));
+            outbox.enqueue("REFUND", refundId, payment.getId(), payment.getMerchantId(), SUCCEEDED, data(payment, refund));
         } else {
             refund.failed(result.declineCode(), result.message(), now);
             // The customer is still charged, so the payment goes back to SUCCESS and can be refunded again.
@@ -120,7 +120,7 @@ public class RefundStateService {
                     Map.of("failureCode", String.valueOf(result.declineCode())));
             audit.record("PAYMENT", paymentId, "STATUS_CHANGED", "REFUND_PENDING", "SUCCESS", actor,
                     Map.of("refundId", refundId));
-            outbox.enqueue("REFUND", refundId, payment.getMerchantId(), FAILED, data(payment, refund));
+            outbox.enqueue("REFUND", refundId, payment.getId(), payment.getMerchantId(), FAILED, data(payment, refund));
         }
         return ApplyOutcome.APPLIED;
     }
@@ -130,6 +130,7 @@ public class RefundStateService {
         data.put("refundId", refund.getId());
         data.put("paymentId", payment.getId());
         data.put("merchantId", payment.getMerchantId());
+        data.put("customerId", payment.getCustomerId());
         data.put("status", refund.getStatus().name());
         data.put("amount", refund.getAmount());
         data.put("currency", payment.getCurrency());

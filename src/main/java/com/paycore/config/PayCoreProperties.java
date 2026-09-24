@@ -13,6 +13,7 @@ public record PayCoreProperties(
         Fraud fraud,
         Jobs jobs,
         Webhooks webhooks,
+        Events events,
         String adminApiKey) {
 
     public record Idempotency(Duration ttl, Duration inProgressTimeout) {}
@@ -32,4 +33,10 @@ public record PayCoreProperties(
             Duration webhookDeliveryInterval) {}
 
     public record Webhooks(int maxAttempts, Duration timeout) {}
+
+    /**
+     * @param publisher {@code kafka} or {@code logging} (no broker needed)
+     * @param topic     all PayCore domain events; failed consumer records go to {@code <topic>.DLT}
+     */
+    public record Events(String publisher, String topic, int partitions, Duration publishTimeout) {}
 }

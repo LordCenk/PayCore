@@ -29,6 +29,10 @@ public class OutboxEvent {
     @Column(name = "aggregate_id")
     private String aggregateId;
 
+    /** Kafka message key: the payment id, so a payment's and its refunds' events stay ordered. */
+    @Column(name = "partition_key")
+    private String partitionKey;
+
     @Column(name = "merchant_id")
     private String merchantId;
 
@@ -45,11 +49,12 @@ public class OutboxEvent {
 
     protected OutboxEvent() {}
 
-    public OutboxEvent(String eventId, String aggregateType, String aggregateId, String merchantId,
-                       String eventType, String payload, Instant createdAt) {
+    public OutboxEvent(String eventId, String aggregateType, String aggregateId, String partitionKey,
+                       String merchantId, String eventType, String payload, Instant createdAt) {
         this.eventId = eventId;
         this.aggregateType = aggregateType;
         this.aggregateId = aggregateId;
+        this.partitionKey = partitionKey;
         this.merchantId = merchantId;
         this.eventType = eventType;
         this.payload = payload;
@@ -60,6 +65,7 @@ public class OutboxEvent {
     public String getEventId() { return eventId; }
     public String getAggregateType() { return aggregateType; }
     public String getAggregateId() { return aggregateId; }
+    public String getPartitionKey() { return partitionKey; }
     public String getMerchantId() { return merchantId; }
     public String getEventType() { return eventType; }
     public String getPayload() { return payload; }

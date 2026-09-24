@@ -32,8 +32,13 @@ public class OutboxRelay {
     @Transactional
     public int relayBatch() {
         List<OutboxEvent> batch = events.lockUnpublished(BATCH_SIZE);
+        if (batch.isEmpty()) {
+            return 0;
+        }
+        // Throws if the broker doesn't acknowledge every event: the transaction rolls back and the
+        // whole batch is retried on the next run. Some events may then be published twice, never zero times.
+        publisher.publishAll(batch);
         for (OutboxEvent event : batch) {
-            publisher.publish(event);
             webhookDeliveries.enqueue(event);
             event.markPublished(clock.instant());
         }

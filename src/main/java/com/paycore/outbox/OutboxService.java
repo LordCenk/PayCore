@@ -25,8 +25,8 @@ public class OutboxService {
 
     /** Must run inside the transaction that makes the state change. */
     @Transactional(propagation = Propagation.MANDATORY)
-    public void enqueue(String aggregateType, String aggregateId, String merchantId, String eventType,
-                        Map<String, Object> data) {
+    public void enqueue(String aggregateType, String aggregateId, String partitionKey, String merchantId,
+                        String eventType, Map<String, Object> data) {
         String eventId = Ids.newId("evt");
         Instant now = clock.instant();
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -34,7 +34,7 @@ public class OutboxService {
         payload.put("type", eventType);
         payload.put("occurredAt", now.toString());
         payload.put("data", data);
-        events.save(new OutboxEvent(eventId, aggregateType, aggregateId, merchantId, eventType,
+        events.save(new OutboxEvent(eventId, aggregateType, aggregateId, partitionKey, merchantId, eventType,
                 json.writeValueAsString(payload), now));
     }
 }

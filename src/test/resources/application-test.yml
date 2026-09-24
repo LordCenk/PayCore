@@ -17,3 +17,6 @@ paycore:
   webhooks:
     max-attempts: 3
     timeout: 2s
+  events:
+    # Most tests don't need a broker; KafkaEventsIT switches this to kafka with an embedded broker.
+    publisher: logging

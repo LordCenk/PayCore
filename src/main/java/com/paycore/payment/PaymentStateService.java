@@ -100,7 +100,7 @@ public class PaymentStateService {
         }
         audit.record("PAYMENT", payment.getId(), "CREATED", null, PaymentStatus.CREATED.name(), actor,
                 Map.of("amount", command.amount(), "currency", currency));
-        outbox.enqueue("PAYMENT", payment.getId(), merchant.getId(), PaymentEvents.CREATED, PaymentEvents.data(payment));
+        outbox.enqueue("PAYMENT", payment.getId(), payment.getId(), merchant.getId(), PaymentEvents.CREATED, PaymentEvents.data(payment));
 
         for (FraudDecision flag : fraudResult.flags()) {
             audit.record("PAYMENT", payment.getId(), "FRAUD_FLAGGED", null, null, "system:fraud",
@@ -111,7 +111,7 @@ public class PaymentStateService {
         if (block.isPresent()) {
             payment.recordFailure("FRAUD_SUSPECTED", block.get().reason());
             changeStatus(payment, PaymentStatus.FAILED, "system:fraud", Map.of("rule", block.get().rule()));
-            outbox.enqueue("PAYMENT", payment.getId(), merchant.getId(), PaymentEvents.FAILED, PaymentEvents.data(payment));
+            outbox.enqueue("PAYMENT", payment.getId(), payment.getId(), merchant.getId(), PaymentEvents.FAILED, PaymentEvents.data(payment));
             return payment;
         }
 
@@ -164,13 +164,13 @@ public class PaymentStateService {
             changeStatus(payment, PaymentStatus.SUCCESS, actor, Map.of("attempt", payment.getAttemptCount()));
             String tx = ledger.recordPayment(payment);
             audit.record("PAYMENT", paymentId, "LEDGER_POSTED", null, tx, actor, null);
-            outbox.enqueue("PAYMENT", paymentId, payment.getMerchantId(), PaymentEvents.SUCCEEDED,
+            outbox.enqueue("PAYMENT", paymentId, paymentId, payment.getMerchantId(), PaymentEvents.SUCCEEDED,
                     PaymentEvents.data(payment));
         } else {
             payment.recordFailure(result.declineCode(), result.message());
             payment.stopRetrying();
             changeStatus(payment, PaymentStatus.FAILED, actor, Map.of("failureCode", String.valueOf(result.declineCode())));
-            outbox.enqueue("PAYMENT", paymentId, payment.getMerchantId(), PaymentEvents.FAILED,
+            outbox.enqueue("PAYMENT", paymentId, paymentId, payment.getMerchantId(), PaymentEvents.FAILED,
                     PaymentEvents.data(payment));
         }
         return ApplyOutcome.APPLIED;
@@ -201,7 +201,7 @@ public class PaymentStateService {
                 "No processor response after " + (payment.getAttemptCount() - 1) + " attempts");
         payment.stopRetrying();
         changeStatus(payment, PaymentStatus.FAILED, actor, null);
-        outbox.enqueue("PAYMENT", paymentId, payment.getMerchantId(), PaymentEvents.FAILED, PaymentEvents.data(payment));
+        outbox.enqueue("PAYMENT", paymentId, paymentId, payment.getMerchantId(), PaymentEvents.FAILED, PaymentEvents.data(payment));
         return ApplyOutcome.APPLIED;
     }
 
@@ -212,7 +212,7 @@ public class PaymentStateService {
                 .orElseThrow(() -> ApiException.notFound("Payment", paymentId));
         payment.stopRetrying();
         changeStatus(payment, PaymentStatus.CANCELLED, "merchant:" + merchant.getId(), null);
-        outbox.enqueue("PAYMENT", paymentId, payment.getMerchantId(), PaymentEvents.CANCELLED,
+        outbox.enqueue("PAYMENT", paymentId, paymentId, payment.getMerchantId(), PaymentEvents.CANCELLED,
                 PaymentEvents.data(payment));
         return payment;
     }

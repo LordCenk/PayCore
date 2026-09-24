@@ -7,7 +7,7 @@ through a payment, and webhooks that arrive twice or out of order.
 The full design (state machine, schema, API, failure scenarios) is in
 [`PAYCORE_DESIGN.md`](PAYCORE_DESIGN.md).
 
-**Stack:** Java 21, Spring Boot 4, PostgreSQL 16, Flyway, JUnit 5.
+**Stack:** Java 21, Spring Boot 4, PostgreSQL 16, Kafka 4, Flyway, JUnit 5.
 
 ## What's implemented
 
@@ -25,22 +25,30 @@ The full design (state machine, schema, API, failure scenarios) is in
 | Audit logs | Append-only row for every state change, written in the same transaction |
 | Double-entry ledger | Every payment and refund is a balanced debit/credit pair |
 | Transactional outbox | Events are stored with the state change and relayed afterwards |
+| Kafka | Outbox relay publishes to `paycore.events` keyed by payment id; broker must ack before an event counts as published |
+| Event consumers | Analytics (daily merchant totals) and notifications (customer receipts), each idempotent, with a dead-letter topic |
 
-**Not yet:** Kafka (events currently go to a logging publisher behind the
-`EventPublisher` interface), Redis, partial refunds, observability dashboards.
+**Not yet:** Redis, partial refunds, observability dashboards.
 
 ## Run it
 
-You need Java 21 and PostgreSQL.
+You need Java 21 and Docker (for PostgreSQL and Kafka).
 
 ```bash
-docker compose up -d          # PostgreSQL with `paycore` and `paycore_test` databases
-./mvnw spring-boot:run        # or: mvn spring-boot:run
+docker compose up -d          # PostgreSQL (paycore + paycore_test databases) and a single-node Kafka
+./mvnw spring-boot:run
 ```
 
 The app starts on `http://localhost:8080` and applies the schema with Flyway.
-Database settings can be overridden with `PAYCORE_DB_URL`, `PAYCORE_DB_USER`
-and `PAYCORE_DB_PASSWORD`.
+
+| Setting | Default |
+| --- | --- |
+| `PAYCORE_DB_URL`, `PAYCORE_DB_USER`, `PAYCORE_DB_PASSWORD` | `jdbc:postgresql://localhost:5432/paycore`, `paycore`, `paycore` |
+| `PAYCORE_KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` |
+| `PAYCORE_EVENTS_PUBLISHER` | `kafka`; set `logging` to run without Kafka (events are logged instead, and the consumers are off) |
+
+If Kafka is down, payments still work: events wait in the outbox and are
+published once the broker is back.
 
 ## Test it
 
@@ -48,11 +56,11 @@ and `PAYCORE_DB_PASSWORD`.
 mvn test
 ```
 
-54 tests: unit tests for the state machine, ledger and fraud rules, plus
+62 tests: unit tests for the state machine, ledger and fraud rules, plus
 integration tests (`*IT`) that run the whole app against the `paycore_test`
 database (override with `PAYCORE_TEST_DB_URL`). Every failure scenario in the
 design doc has a test, including concurrent duplicate requests and concurrent
-refunds.
+refunds. The Kafka tests use an in-process broker, so they don't need Docker.
 
 ## Try it
 
@@ -80,7 +88,11 @@ curl -s -X POST localhost:8080/api/v1/payments/pay_.../refund -H "Authorization:
 curl -s localhost:8080/api/v1/payments/pay_.../ledger -H "Authorization: Bearer $KEY"
 curl -s localhost:8080/api/v1/payments/pay_.../audit-logs -H "Authorization: Bearer $KEY"
 
-# 5. Run reconciliation
+# 5. After a moment, the Kafka consumers have caught up
+curl -s localhost:8080/api/v1/analytics/daily -H "Authorization: Bearer $KEY"
+curl -s localhost:8080/api/v1/customers/cust_.../notifications -H "Authorization: Bearer $KEY"
+
+# 6. Run reconciliation
 curl -s -X POST localhost:8080/api/v1/admin/reconciliation/run -H 'X-Admin-Key: admin_dev_key'
 ```
 
@@ -113,6 +125,8 @@ force an outcome; any other `tok_...` gets 70% success, 20% decline, 10% timeout
 | GET | `/api/v1/payments/{id}/ledger`, `/api/v1/payments/{id}/audit-logs` | |
 | POST | `/api/v1/payments/{id}/refund` | Requires `Idempotency-Key` |
 | GET | `/api/v1/refunds/{id}` | |
+| GET | `/api/v1/analytics/daily?from=&to=` | Daily totals, from the analytics consumer |
+| GET | `/api/v1/customers/{id}/notifications` | Receipts, from the notification consumer |
 | POST | `/api/v1/webhooks/payment` | From the processor; header `X-Processor-Signature` = hex HMAC-SHA256 of the body |
 | POST | `/api/v1/admin/reconciliation/run`, `/api/v1/admin/retries/run` | Header `X-Admin-Key` |
 
@@ -129,7 +143,10 @@ src/main/java/com/paycore/
   processor/       PaymentProcessor interface + MockPaymentProcessor
   fraud/           rules and FraudService
   ledger/          double-entry ledger
-  outbox/          transactional outbox + relay
+  outbox/          transactional outbox, relay, Kafka publisher
+  events/          Kafka config (topics, dead-letter handling), idempotent-consumer support
+  analytics/       analytics consumer + daily stats API
+  notification/    notification consumer + API
   webhook/         inbound (processor) and outbound (merchant) webhooks
   reconciliation/  reconciliation service/job, admin endpoints
   audit/           audit log

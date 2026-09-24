@@ -11,6 +11,26 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
+  kafka:
+    bootstrap-servers: ${PAYCORE_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+        # Fail fast when the broker is down: the relay rolls back and the events wait in the outbox.
+        max.block.ms: 5000
+        request.timeout.ms: 5000
+        delivery.timeout.ms: 10000
+    consumer:
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+    admin:
+      # Don't hold up startup for long when the broker is down; topics are created once it's reachable.
+      operation-timeout: 5s
+      close-timeout: 2s
+      properties:
+        request.timeout.ms: 5000
+        default.api.timeout.ms: 5000
 
 server:
   port: ${PORT:8080}
@@ -54,3 +74,8 @@ paycore:
   webhooks:
     max-attempts: 8
     timeout: 5s
+  events:
+    publisher: ${PAYCORE_EVENTS_PUBLISHER:kafka}
+    topic: paycore.events
+    partitions: 3
+    publish-timeout: 15s
