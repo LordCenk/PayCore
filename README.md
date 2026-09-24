@@ -1,0 +1,138 @@
+# PayCore
+
+A simplified payment processing backend, built to handle the failures real
+payment systems face: duplicate requests, processor timeouts, crashes midway
+through a payment, and webhooks that arrive twice or out of order.
+
+The full design (state machine, schema, API, failure scenarios) is in
+[`PAYCORE_DESIGN.md`](PAYCORE_DESIGN.md).
+
+**Stack:** Java 21, Spring Boot 4, PostgreSQL 16, Flyway, JUnit 5.
+
+## What's implemented
+
+| Feature | How |
+| --- | --- |
+| Payment creation | `POST /api/v1/payments`, validated, fraud-checked, processed synchronously |
+| Transaction lifecycle | Explicit state machine (`PaymentStatus`); illegal transitions throw |
+| Idempotency keys | Unique `(merchant_id, key)` constraint decides the winner; responses are replayed |
+| Payment retries | Exponential backoff with jitter; each retry asks the processor before re-sending |
+| Webhooks | Inbound (HMAC-verified, de-duplicated) and outbound (signed, retried) |
+| Refunds | Full refunds, row-locked against concurrent payment updates |
+| Reconciliation | Compares PayCore with the processor, checks ledger invariants, resolves stuck refunds |
+| Fraud-rule simulation | Amount limit, velocity, deny-listed tokens (block); unusual amount (flag) |
+| Distributed locking | `SELECT ... FOR UPDATE` row locks, `SKIP LOCKED` job queues, `next_retry_at` leases |
+| Audit logs | Append-only row for every state change, written in the same transaction |
+| Double-entry ledger | Every payment and refund is a balanced debit/credit pair |
+| Transactional outbox | Events are stored with the state change and relayed afterwards |
+
+**Not yet:** Kafka (events currently go to a logging publisher behind the
+`EventPublisher` interface), Redis, partial refunds, observability dashboards.
+
+## Run it
+
+You need Java 21 and PostgreSQL.
+
+```bash
+docker compose up -d          # PostgreSQL with `paycore` and `paycore_test` databases
+./mvnw spring-boot:run        # or: mvn spring-boot:run
+```
+
+The app starts on `http://localhost:8080` and applies the schema with Flyway.
+Database settings can be overridden with `PAYCORE_DB_URL`, `PAYCORE_DB_USER`
+and `PAYCORE_DB_PASSWORD`.
+
+## Test it
+
+```bash
+mvn test
+```
+
+54 tests: unit tests for the state machine, ledger and fraud rules, plus
+integration tests (`*IT`) that run the whole app against the `paycore_test`
+database (override with `PAYCORE_TEST_DB_URL`). Every failure scenario in the
+design doc has a test, including concurrent duplicate requests and concurrent
+refunds.
+
+## Try it
+
+```bash
+# 1. Register a merchant; keep the apiKey (it's shown only once)
+curl -s -X POST localhost:8080/api/v1/merchants -H 'Content-Type: application/json' \
+  -d '{"name":"DemoStore","email":"payments@demostore.com"}'
+export KEY=sk_test_...
+
+# 2. Create a customer and a tokenized payment method
+curl -s -X POST localhost:8080/api/v1/customers -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' -d '{"name":"Asha","email":"asha@example.com"}'
+curl -s -X POST localhost:8080/api/v1/payment-methods -H "Authorization: Bearer $KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"customerId":"cust_...","type":"CARD","token":"tok_success","lastFour":"4242"}'
+
+# 3. Pay ₹1,000 (amounts are in paise). Send it twice: you get the same payment back.
+curl -s -X POST localhost:8080/api/v1/payments -H "Authorization: Bearer $KEY" \
+  -H 'Idempotency-Key: order-123' -H 'Content-Type: application/json' \
+  -d '{"amount":100000,"currency":"INR","customerId":"cust_...","paymentMethodId":"pm_..."}'
+
+# 4. Refund it, then look at the ledger and the audit trail
+curl -s -X POST localhost:8080/api/v1/payments/pay_.../refund -H "Authorization: Bearer $KEY" \
+  -H 'Idempotency-Key: refund-123' -H 'Content-Type: application/json' -d '{"reason":"returned"}'
+curl -s localhost:8080/api/v1/payments/pay_.../ledger -H "Authorization: Bearer $KEY"
+curl -s localhost:8080/api/v1/payments/pay_.../audit-logs -H "Authorization: Bearer $KEY"
+
+# 5. Run reconciliation
+curl -s -X POST localhost:8080/api/v1/admin/reconciliation/run -H 'X-Admin-Key: admin_dev_key'
+```
+
+### Mock processor test tokens
+
+The mock gateway never moves money. Use these tokens on a payment method to
+force an outcome; any other `tok_...` gets 70% success, 20% decline, 10% timeout.
+
+| Token | Behaviour |
+| --- | --- |
+| `tok_success` | Charge succeeds |
+| `tok_decline` | Charge is declined |
+| `tok_timeout` | First call never reaches the gateway; the retry succeeds |
+| `tok_timeout_after_charge` | Charge succeeds but the response is lost; the retry finds it |
+| `tok_timeout_always` | Gateway unreachable; payment fails once retries are exhausted |
+| `tok_refund_decline` | Charge succeeds, refunds are declined |
+| `tok_blocked` | Blocked by the fraud deny list |
+
+## API
+
+| Method | Path | |
+| --- | --- | --- |
+| POST | `/api/v1/merchants` | Register (public); returns API key and webhook secret |
+| GET | `/api/v1/merchants/{id}` | Own merchant only |
+| POST/GET | `/api/v1/customers`, `/api/v1/customers/{id}` | |
+| POST/GET | `/api/v1/payment-methods`, `/api/v1/payment-methods/{id}` | Tokens only, never card numbers |
+| POST | `/api/v1/payments` | Requires `Idempotency-Key`. 201 final, 202 pending |
+| GET | `/api/v1/payments`, `/api/v1/payments/{id}` | List supports `?status=&limit=` |
+| POST | `/api/v1/payments/{id}/cancel` | Only from `CREATED` |
+| GET | `/api/v1/payments/{id}/ledger`, `/api/v1/payments/{id}/audit-logs` | |
+| POST | `/api/v1/payments/{id}/refund` | Requires `Idempotency-Key` |
+| GET | `/api/v1/refunds/{id}` | |
+| POST | `/api/v1/webhooks/payment` | From the processor; header `X-Processor-Signature` = hex HMAC-SHA256 of the body |
+| POST | `/api/v1/admin/reconciliation/run`, `/api/v1/admin/retries/run` | Header `X-Admin-Key` |
+
+Outbound webhooks to merchants carry `X-PayCore-Event-Id`,
+`X-PayCore-Event-Type` and `X-PayCore-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, t + "." + body)>`.
+
+## Project layout
+
+```text
+src/main/java/com/paycore/
+  payment/         state machine, entity, PaymentStateService (transactions), PaymentService (orchestration), retry job
+  refund/          refund lifecycle
+  idempotency/     key claiming, replay, request handler
+  processor/       PaymentProcessor interface + MockPaymentProcessor
+  fraud/           rules and FraudService
+  ledger/          double-entry ledger
+  outbox/          transactional outbox + relay
+  webhook/         inbound (processor) and outbound (merchant) webhooks
+  reconciliation/  reconciliation service/job, admin endpoints
+  audit/           audit log
+  merchant/ customer/ paymentmethod/ auth/ common/ config/
+src/main/resources/db/migration/   Flyway schema
+```

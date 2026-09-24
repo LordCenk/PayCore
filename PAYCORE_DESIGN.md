@@ -394,12 +394,17 @@ checked in code before commit and by the reconciliation job.
 | merchant_id     | FK          | → merchants.id                                  |
 | key             | VARCHAR     | value of the `Idempotency-Key` header           |
 | request_hash    | VARCHAR     | SHA-256 of the normalized request body          |
-| payment_id      | FK          | → payments.id, nullable while in progress       |
+| resource_id     | VARCHAR     | payment or refund created by the request; set in the same transaction that creates it |
 | status          | VARCHAR     | `IN_PROGRESS`, `COMPLETED`                      |
 | response_status | INT         | HTTP status returned the first time             |
-| response_body   | JSONB       | stored response, replayed on retries            |
+| response_body   | TEXT        | stored JSON response, replayed on retries       |
 | created_at      | TIMESTAMPTZ |                                                 |
-| expires_at      | TIMESTAMPTZ | e.g. created_at + 24h                           |
+| updated_at      | TIMESTAMPTZ | used to detect abandoned `IN_PROGRESS` keys     |
+| expires_at      | TIMESTAMPTZ | created_at + 24h                                |
+
+The same table serves payments and refunds, so the column is `resource_id`
+rather than `payment_id`. The request hash includes the endpoint path, so a key
+reused on a different endpoint is rejected as a different request.
 
 Constraint: **UNIQUE `(merchant_id, key)`**. Keys are scoped per merchant so
 two merchants can use the same key string.
@@ -531,7 +536,8 @@ Responses:
 | Status | When                                                             |
 | ------ | ---------------------------------------------------------------- |
 | 201    | Payment created; body has `id` and `status`                      |
-| 200    | Same key + same body seen before; original response replayed     |
+| same as first | Same key + same body seen before: original status and body replayed, with header `Idempotent-Replayed: true` |
+| 200    | Same key, but the first attempt crashed after creating the payment: current state of that payment |
 | 202    | Accepted but outcome not final yet (`PENDING`, e.g. timeout)     |
 | 400    | Validation error (bad amount, unsupported currency)              |
 | 401    | Missing or invalid API key                                       |
@@ -644,9 +650,9 @@ charge twice.
   if the processor has never seen it.
 - Retries use exponential backoff with jitter (e.g. 2s, 4s, 8s, 16s, 32s),
   capped at `max_attempts = 5`.
-- After retries are exhausted, the payment stays `PENDING` and is handed to
-  reconciliation (Scenario 3), which gives a definitive answer. It is only
-  marked `FAILED` once the processor confirms it has no record of the charge.
+- After retries are exhausted, the retry job asks the processor one last time.
+  The payment is only marked `FAILED` (`RETRIES_EXHAUSTED`) once the processor
+  confirms it has no record of the charge.
 - The result may also arrive by webhook at any time (Scenario 4); whichever
   source arrives first wins, the others become no-ops.
 
@@ -670,17 +676,22 @@ succeeded.
   reference X".
 - **Never re-charge blindly.** Because the reference is the processor's
   idempotency key, even a resent charge returns the original result.
-- **Reconciliation job.** Runs every few minutes:
+- **A retry is always already scheduled.** Before every processor call,
+  PayCore commits `attempt_count + 1` and `next_retry_at = now + backoff`.
+  (A new payment gets `next_retry_at` when it becomes `PENDING`, before the
+  first call.) So if the process dies mid-call, the retry job finds the
+  payment once `next_retry_at` passes:
 
   ```sql
-  SELECT * FROM payments
-   WHERE status = 'PENDING'
-     AND updated_at < now() - interval '2 minutes';
+  SELECT id FROM payments
+   WHERE status = 'PENDING' AND next_retry_at <= now();
   ```
 
   For each row, it asks the processor for the status of
   `processor_reference` and applies the answer through the normal state
-  machine (`PENDING → SUCCESS` or `PENDING → FAILED`).
+  machine (`PENDING → SUCCESS` or `PENDING → FAILED`). Pushing
+  `next_retry_at` forward under the row lock also works as a lease: another
+  instance running the same job skips the payment while one is working on it.
 - **Webhook as a second path.** The processor's `payment.succeeded`
   webhook will also move the payment to `SUCCESS` independently.
 - **Atomic side effects.** `SUCCESS` status + ledger entries + audit log +
