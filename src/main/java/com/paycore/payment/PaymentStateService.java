@@ -11,6 +11,7 @@ import com.paycore.fraud.FraudResult;
 import com.paycore.fraud.FraudService;
 import com.paycore.idempotency.IdempotencyService;
 import com.paycore.ledger.LedgerService;
+import com.paycore.observability.PayCoreMetrics;
 import com.paycore.outbox.OutboxService;
 import com.paycore.paymentmethod.PaymentMethod;
 import com.paycore.paymentmethod.PaymentMethodRepository;
@@ -47,12 +48,14 @@ public class PaymentStateService {
     private final IdempotencyService idempotency;
     private final PaymentProcessor processor;
     private final PayCoreProperties properties;
+    private final PayCoreMetrics metrics;
     private final Clock clock;
 
     public PaymentStateService(PaymentRepository payments, CustomerRepository customers,
                                PaymentMethodRepository paymentMethods, FraudService fraud, LedgerService ledger,
                                AuditService audit, OutboxService outbox, IdempotencyService idempotency,
-                               PaymentProcessor processor, PayCoreProperties properties, Clock clock) {
+                               PaymentProcessor processor, PayCoreProperties properties, PayCoreMetrics metrics,
+                               Clock clock) {
         this.payments = payments;
         this.customers = customers;
         this.paymentMethods = paymentMethods;
@@ -63,6 +66,7 @@ public class PaymentStateService {
         this.idempotency = idempotency;
         this.processor = processor;
         this.properties = properties;
+        this.metrics = metrics;
         this.clock = clock;
     }
 
@@ -223,6 +227,7 @@ public class PaymentStateService {
     private void changeStatus(Payment payment, PaymentStatus next, String actor, Map<String, ?> metadata) {
         PaymentStatus previous = payment.transitionTo(next, clock.instant());
         audit.record("PAYMENT", payment.getId(), "STATUS_CHANGED", previous.name(), next.name(), actor, metadata);
+        metrics.paymentTransition(next.name(), next == PaymentStatus.FAILED ? payment.getFailureCode() : null);
     }
 
     /** Exponential backoff with up to 20% jitter, so retries from many payments don't arrive in lockstep. */

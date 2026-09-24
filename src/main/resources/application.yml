@@ -42,11 +42,31 @@ spring:
 server:
   port: ${PORT:8080}
 
+logging:
+  # Adds [requestId] to every plain-text log line. For JSON logs set LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs.
+  pattern:
+    correlation: "[%X{requestId:-}] "
+
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  health:
+    # Redis is optional (PayCore falls back to PostgreSQL), so its outage must not mark the app unhealthy.
+    redis:
+      enabled: false
+  metrics:
+    tags:
+      application: paycore
+    distribution:
+      percentiles-histogram:
+        paycore.processor.latency: true
+        http.server.requests: true
 
 paycore:
   # Protects /api/v1/admin/**. Set a real secret outside local development.

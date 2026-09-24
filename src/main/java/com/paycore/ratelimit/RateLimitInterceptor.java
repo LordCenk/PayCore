@@ -2,6 +2,7 @@ package com.paycore.ratelimit;
 
 import com.paycore.auth.ApiKeyAuthFilter;
 import com.paycore.auth.AuthenticatedMerchant;
+import com.paycore.observability.PayCoreMetrics;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -17,9 +18,11 @@ public class RateLimitInterceptor implements HandlerInterceptor {
     public static final String REMAINING_HEADER = "X-RateLimit-Remaining";
 
     private final RateLimiter limiter;
+    private final PayCoreMetrics metrics;
 
-    public RateLimitInterceptor(RateLimiter limiter) {
+    public RateLimitInterceptor(RateLimiter limiter, PayCoreMetrics metrics) {
         this.limiter = limiter;
+        this.metrics = metrics;
     }
 
     @Override
@@ -36,6 +39,7 @@ public class RateLimitInterceptor implements HandlerInterceptor {
         if (decision.allowed()) {
             return true;
         }
+        metrics.rateLimited();
         long retryAfterSeconds = Math.max(1, (decision.retryAfterMillis() + 999) / 1000);
         response.setStatus(429);
         response.setHeader("Retry-After", String.valueOf(retryAfterSeconds));

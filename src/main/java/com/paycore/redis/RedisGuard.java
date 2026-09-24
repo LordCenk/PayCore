@@ -1,6 +1,7 @@
 package com.paycore.redis;
 
 import com.paycore.config.PayCoreProperties;
+import com.paycore.observability.PayCoreMetrics;
 import io.lettuce.core.RedisException;
 import java.time.Clock;
 import java.time.Duration;
@@ -25,16 +26,19 @@ public class RedisGuard {
     private static final Logger log = LoggerFactory.getLogger(RedisGuard.class);
 
     private final Duration cooldown;
+    private final PayCoreMetrics metrics;
     private final Clock clock;
     private final AtomicReference<Instant> skipUntil = new AtomicReference<>(Instant.MIN);
 
-    public RedisGuard(PayCoreProperties properties, Clock clock) {
+    public RedisGuard(PayCoreProperties properties, PayCoreMetrics metrics, Clock clock) {
         this.cooldown = properties.redis().failureCooldown();
+        this.metrics = metrics;
         this.clock = clock;
     }
 
     public <T> T call(String operation, Supplier<T> redisCall, T fallback) {
         if (!isAvailable()) {
+            metrics.redisFallback(operation);
             return fallback;
         }
         try {
@@ -42,6 +46,7 @@ public class RedisGuard {
         } catch (DataAccessException | RedisException e) {
             Instant until = clock.instant().plus(cooldown);
             skipUntil.set(until);
+            metrics.redisFallback(operation);
             log.warn("Redis unavailable during {} ({}); using fallback until {}", operation, e.getMessage(), until);
             return fallback;
         }

@@ -1,0 +1,36 @@
+groups:
+  - name: paycore
+    rules:
+      - alert: OutboxLagging
+        # Events are not reaching Kafka: broker down or relay stuck. Payments still work, consumers fall behind.
+        expr: paycore_outbox_oldest_age_seconds > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Oldest unpublished outbox event is {{ $value | humanizeDuration }} old"
+
+      - alert: HighPaymentFailureRate
+        expr: |
+          sum(rate(paycore_payment_transitions_total{to="FAILED"}[10m]))
+            / clamp_min(sum(rate(paycore_payment_transitions_total{to=~"SUCCESS|FAILED"}[10m])), 1e-9) > 0.5
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "More than half of finished payments are failing"
+
+      - alert: ProcessorTimeouts
+        expr: sum(rate(paycore_processor_latency_seconds_count{operation="charge",outcome="timeout"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Payment processor is timing out; payments are piling up in PENDING"
+
+      - alert: ReconciliationProblems
+        expr: increase(paycore_reconciliation_problems_total[1h]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Reconciliation found mismatches or unbalanced ledger entries; check the audit log"

@@ -34,7 +34,23 @@ Redis is only an optimisation. If it is unreachable, every feature falls back to
 PostgreSQL (rate limiting is skipped), and a small circuit breaker stops PayCore
 from waiting on Redis for each request.
 
-**Not yet:** partial refunds, observability dashboards.
+**Not yet:** partial refunds.
+
+## Observability
+
+- **Metrics** at `/actuator/prometheus`: payment transitions by status and failure
+  code (counted only after commit), processor latency and outcome, outbox backlog
+  and oldest-event age, rate-limit rejections, idempotent replays, webhook
+  deliveries, Redis fallbacks, plus Spring's HTTP and JVM metrics.
+- **Dashboard and alerts:** `docker compose --profile observability up -d` starts
+  Prometheus (http://localhost:9090) and Grafana (http://localhost:3000, dashboard
+  "PayCore"). Alert rules in `observability/alerts.yml`: outbox lagging, high
+  failure rate, processor timeouts, reconciliation problems.
+- **Logs:** every line carries the request id (`X-Request-Id`, echoed or
+  generated) and the merchant id. Set `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs` for
+  JSON logs.
+- **Health:** `/actuator/health` (with `/liveness` and `/readiness` probes). Redis
+  is left out on purpose: it's optional, so its outage mustn't fail the app.
 
 ## Run it
 
@@ -63,7 +79,7 @@ published once the broker is back.
 mvn test
 ```
 
-74 tests: unit tests for the state machine, ledger and fraud rules, plus
+80 tests: unit tests for the state machine, ledger and fraud rules, plus
 integration tests (`*IT`) that run the whole app against the `paycore_test`
 database (override with `PAYCORE_TEST_DB_URL`) and Redis database 1 (`PAYCORE_TEST_REDIS_HOST`/`_PORT`). Every failure scenario in the
 design doc has a test, including concurrent duplicate requests and concurrent
@@ -156,6 +172,8 @@ src/main/java/com/paycore/
   notification/    notification consumer + API
   redis/           RedisGuard (fail-open + circuit breaker), DistributedLock
   ratelimit/       token-bucket rate limiter + interceptor
+  observability/   metrics, metered processor decorator, outbox gauges, request-id filter
+observability/     Prometheus config + alert rules, Grafana provisioning and dashboard
   webhook/         inbound (processor) and outbound (merchant) webhooks
   reconciliation/  reconciliation service/job, admin endpoints
   audit/           audit log

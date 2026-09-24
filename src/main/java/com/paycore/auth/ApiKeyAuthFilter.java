@@ -6,6 +6,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import org.slf4j.MDC;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -55,6 +56,11 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
             return;
         }
         request.setAttribute(MERCHANT_ATTRIBUTE, merchant);
-        chain.doFilter(request, response);
+        MDC.put("merchantId", merchant.id());
+        try {
+            chain.doFilter(request, response);
+        } finally {
+            MDC.remove("merchantId");
+        }
     }
 }

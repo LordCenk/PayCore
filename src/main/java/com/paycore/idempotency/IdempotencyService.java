@@ -2,6 +2,7 @@ package com.paycore.idempotency;
 
 import com.paycore.common.ApiException;
 import com.paycore.config.PayCoreProperties;
+import com.paycore.observability.PayCoreMetrics;
 import java.time.Clock;
 import java.time.Instant;
 import org.springframework.http.HttpStatus;
@@ -23,13 +24,15 @@ public class IdempotencyService {
 
     private final IdempotencyKeyRepository keys;
     private final IdempotencyCache cache;
+    private final PayCoreMetrics metrics;
     private final PayCoreProperties.Idempotency config;
     private final Clock clock;
 
-    public IdempotencyService(IdempotencyKeyRepository keys, IdempotencyCache cache, PayCoreProperties properties,
-                              Clock clock) {
+    public IdempotencyService(IdempotencyKeyRepository keys, IdempotencyCache cache, PayCoreMetrics metrics,
+                              PayCoreProperties properties, Clock clock) {
         this.keys = keys;
         this.cache = cache;
+        this.metrics = metrics;
         this.config = properties.idempotency();
         this.clock = clock;
     }
@@ -55,6 +58,7 @@ public class IdempotencyService {
             if (!cached.get().requestHash().equals(requestHash)) {
                 throw keyReused();
             }
+            metrics.idempotentReplay("redis");
             return new Replay(cached.get().status(), cached.get().body());
         }
         Instant now = clock.instant();
@@ -73,6 +77,7 @@ public class IdempotencyService {
             throw keyReused();
         }
         if (existing.getStatus() == IdempotencyKey.Status.COMPLETED) {
+            metrics.idempotentReplay("database");
             return new Replay(existing.getResponseStatus(), existing.getResponseBody());
         }
         if (existing.getResourceId() != null && existing.getUpdatedAt().isBefore(abandonedBefore)) {

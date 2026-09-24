@@ -5,6 +5,7 @@ import com.paycore.common.ApiException;
 import com.paycore.common.Ids;
 import com.paycore.idempotency.IdempotencyService;
 import com.paycore.ledger.LedgerService;
+import com.paycore.observability.PayCoreMetrics;
 import com.paycore.outbox.OutboxService;
 import com.paycore.payment.ApplyOutcome;
 import com.paycore.payment.Payment;
@@ -36,16 +37,19 @@ public class RefundStateService {
     private final AuditService audit;
     private final OutboxService outbox;
     private final IdempotencyService idempotency;
+    private final PayCoreMetrics metrics;
     private final Clock clock;
 
     public RefundStateService(PaymentRepository payments, RefundRepository refunds, LedgerService ledger,
-                              AuditService audit, OutboxService outbox, IdempotencyService idempotency, Clock clock) {
+                              AuditService audit, OutboxService outbox, IdempotencyService idempotency,
+                              PayCoreMetrics metrics, Clock clock) {
         this.payments = payments;
         this.refunds = refunds;
         this.ledger = ledger;
         this.audit = audit;
         this.outbox = outbox;
         this.idempotency = idempotency;
+        this.metrics = metrics;
         this.clock = clock;
     }
 
@@ -76,6 +80,7 @@ public class RefundStateService {
         }
         String actor = "merchant:" + merchantId;
         PaymentStatus previous = payment.transitionTo(PaymentStatus.REFUND_PENDING, now);
+        metrics.paymentTransition(PaymentStatus.REFUND_PENDING.name(), null);
         audit.record("PAYMENT", paymentId, "STATUS_CHANGED", previous.name(), PaymentStatus.REFUND_PENDING.name(),
                 actor, Map.of("refundId", refund.getId()));
         audit.record("REFUND", refund.getId(), "CREATED", null, RefundStatus.PENDING.name(), actor,
@@ -106,20 +111,24 @@ public class RefundStateService {
         if (succeeded) {
             refund.succeeded(result.providerRefundId(), now);
             payment.transitionTo(PaymentStatus.REFUNDED, now);
+            metrics.paymentTransition(PaymentStatus.REFUNDED.name(), null);
             String tx = ledger.recordRefund(payment, refund);
             audit.record("REFUND", refundId, "STATUS_CHANGED", "PENDING", "SUCCEEDED", actor, Map.of("ledgerTx", tx));
             audit.record("PAYMENT", paymentId, "STATUS_CHANGED", "REFUND_PENDING", "REFUNDED", actor,
                     Map.of("refundId", refundId));
             outbox.enqueue("REFUND", refundId, payment.getId(), payment.getMerchantId(), SUCCEEDED, data(payment, refund));
+            metrics.refundOutcome("succeeded");
         } else {
             refund.failed(result.declineCode(), result.message(), now);
             // The customer is still charged, so the payment goes back to SUCCESS and can be refunded again.
             payment.transitionTo(PaymentStatus.SUCCESS, now);
+            metrics.paymentTransition(PaymentStatus.SUCCESS.name(), null);
             audit.record("REFUND", refundId, "STATUS_CHANGED", "PENDING", "FAILED", actor,
                     Map.of("failureCode", String.valueOf(result.declineCode())));
             audit.record("PAYMENT", paymentId, "STATUS_CHANGED", "REFUND_PENDING", "SUCCESS", actor,
                     Map.of("refundId", refundId));
             outbox.enqueue("REFUND", refundId, payment.getId(), payment.getMerchantId(), FAILED, data(payment, refund));
+            metrics.refundOutcome("failed");
         }
         return ApplyOutcome.APPLIED;
     }

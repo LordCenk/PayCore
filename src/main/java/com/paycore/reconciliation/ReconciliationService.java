@@ -3,6 +3,7 @@ package com.paycore.reconciliation;
 import com.paycore.audit.AuditService;
 import com.paycore.config.PayCoreProperties;
 import com.paycore.ledger.LedgerEntryRepository;
+import com.paycore.observability.PayCoreMetrics;
 import com.paycore.payment.Payment;
 import com.paycore.payment.PaymentRepository;
 import com.paycore.payment.PaymentStatus;
@@ -51,14 +52,15 @@ public class ReconciliationService {
     private final RefundStateService refundState;
     private final PaymentProcessor processor;
     private final AuditService audit;
+    private final PayCoreMetrics metrics;
     private final TransactionTemplate tx;
     private final Duration staleAfter;
     private final Clock clock;
 
     public ReconciliationService(PaymentRepository payments, RefundRepository refunds, LedgerEntryRepository ledger,
                                  RefundService refundService, RefundStateService refundState,
-                                 PaymentProcessor processor, AuditService audit, PlatformTransactionManager txManager,
-                                 PayCoreProperties properties, Clock clock) {
+                                 PaymentProcessor processor, AuditService audit, PayCoreMetrics metrics,
+                                 PlatformTransactionManager txManager, PayCoreProperties properties, Clock clock) {
         this.payments = payments;
         this.refunds = refunds;
         this.ledger = ledger;
@@ -66,6 +68,7 @@ public class ReconciliationService {
         this.refundState = refundState;
         this.processor = processor;
         this.audit = audit;
+        this.metrics = metrics;
         this.tx = new TransactionTemplate(txManager);
         this.staleAfter = properties.jobs().reconciliationStaleAfter();
         this.clock = clock;
@@ -98,6 +101,8 @@ public class ReconciliationService {
                 mismatches, missingPaymentLedger, missingRefundLedger, unbalanced);
         if (!report.clean()) {
             log.error("reconciliation found problems: {}", report);
+            metrics.reconciliationProblems(mismatches.size() + missingPaymentLedger.size() + missingRefundLedger.size()
+                    + unbalanced.size());
             tx.executeWithoutResult(s -> audit.record("SYSTEM", "reconciliation", "RECONCILIATION_FAILED", null, null,
                     ACTOR, Map.of("mismatches", mismatches, "paymentsMissingLedger", missingPaymentLedger,
                             "refundsMissingLedger", missingRefundLedger, "unbalancedTransactions", unbalanced)));

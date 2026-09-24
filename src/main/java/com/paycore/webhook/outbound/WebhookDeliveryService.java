@@ -4,6 +4,7 @@ import com.paycore.common.Hashing;
 import com.paycore.config.PayCoreProperties;
 import com.paycore.merchant.Merchant;
 import com.paycore.merchant.MerchantRepository;
+import com.paycore.observability.PayCoreMetrics;
 import com.paycore.outbox.OutboxEvent;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -43,15 +44,18 @@ public class WebhookDeliveryService {
     private final TransactionTemplate tx;
     private final PayCoreProperties.Webhooks config;
     private final HttpClient http;
+    private final PayCoreMetrics metrics;
     private final Clock clock;
 
     public WebhookDeliveryService(WebhookDeliveryRepository deliveries, MerchantRepository merchants,
-                                  PlatformTransactionManager txManager, PayCoreProperties properties, Clock clock) {
+                                  PlatformTransactionManager txManager, PayCoreProperties properties,
+                                  PayCoreMetrics metrics, Clock clock) {
         this.deliveries = deliveries;
         this.merchants = merchants;
         this.tx = new TransactionTemplate(txManager);
         this.config = properties.webhooks();
         this.http = HttpClient.newBuilder().connectTimeout(config.timeout()).build();
+        this.metrics = metrics;
         this.clock = clock;
     }
 
@@ -122,6 +126,8 @@ public class WebhookDeliveryService {
             Instant now = clock.instant();
             d.recordAttempt(delivered, finalCode, finalError, config.maxAttempts(),
                     now.plus(backoff(d.getAttemptCount() + 1)), now);
+            metrics.webhookDelivery(delivered ? "delivered"
+                    : d.getStatus() == WebhookDelivery.Status.FAILED ? "gave_up" : "failed_attempt");
         }));
     }
 
