@@ -3,7 +3,6 @@ package com.paycore.outbox;
 import com.paycore.webhook.outbound.WebhookDeliveryService;
 import java.time.Clock;
 import java.util.List;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,11 +26,6 @@ public class OutboxRelay {
         this.publisher = publisher;
         this.webhookDeliveries = webhookDeliveries;
         this.clock = clock;
-    }
-
-    @Scheduled(fixedDelayString = "${paycore.jobs.outbox-interval}")
-    public void scheduledRun() {
-        relayBatch();
     }
 
     /** Returns the number of events relayed. */
