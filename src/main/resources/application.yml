@@ -1,0 +1,56 @@
+spring:
+  application:
+    name: paycore
+  datasource:
+    url: ${PAYCORE_DB_URL:jdbc:postgresql://localhost:5432/paycore}
+    username: ${PAYCORE_DB_USER:paycore}
+    password: ${PAYCORE_DB_PASSWORD:paycore}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+
+server:
+  port: ${PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+paycore:
+  # Protects /api/v1/admin/**. Set a real secret outside local development.
+  admin-api-key: ${PAYCORE_ADMIN_API_KEY:admin_dev_key}
+  supported-currencies: [INR, USD, EUR]
+  idempotency:
+    ttl: 24h
+    # An IN_PROGRESS key older than this is treated as abandoned (the request crashed).
+    in-progress-timeout: 60s
+  processor:
+    # Outcome probabilities for the mock gateway when a non-test token is used.
+    success-rate: 0.7
+    decline-rate: 0.2
+    # Remaining probability (0.1) is a timeout.
+    webhook-secret: ${PAYCORE_PROCESSOR_WEBHOOK_SECRET:whsec_mock_gateway_dev}
+  retry:
+    max-attempts: 5
+    initial-backoff: 2s
+    max-backoff: 60s
+  fraud:
+    max-amount: 20000000        # 2,00,000.00 in minor units
+    velocity-limit: 5
+    velocity-window: 1m
+    blocked-tokens: [tok_blocked]
+  jobs:
+    enabled: true
+    retry-interval: 5s
+    reconciliation-interval: 60s
+    reconciliation-stale-after: 2m
+    outbox-interval: 1s
+    webhook-delivery-interval: 5s
+  webhooks:
+    max-attempts: 8
+    timeout: 5s
