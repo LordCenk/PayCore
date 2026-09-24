@@ -1,0 +1,19 @@
+spring:
+  datasource:
+    url: ${PAYCORE_TEST_DB_URL:jdbc:postgresql://localhost:5432/paycore_test}
+    username: ${PAYCORE_DB_USER:paycore}
+    password: ${PAYCORE_DB_PASSWORD:paycore}
+
+paycore:
+  processor:
+    webhook-secret: whsec_test
+  retry:
+    # Retries become due immediately, so tests drive the retry job by calling it directly.
+    initial-backoff: 0s
+    max-backoff: 0s
+  jobs:
+    enabled: false
+    reconciliation-stale-after: 0s
+  webhooks:
+    max-attempts: 3
+    timeout: 2s
