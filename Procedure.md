@@ -1,9 +1,5 @@
 # PayCore
 
-Design document: `PAYCORE_DESIGN.md`.
-
-
-
 ## Build and test
 
 - Java 21, Spring Boot 4, PostgreSQL 16. Schema changes go in a new Flyway migration
